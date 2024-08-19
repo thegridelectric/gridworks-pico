@@ -16,7 +16,7 @@ APP_CONFIG_FILE = "app_config.json"
 # *********************************************
 # CONSTANTS
 # *********************************************
-DEFAULT_ACTOR_NAME = "pico-flow-reed"
+DEFAULT_ACTOR_NAME = "pico-flow-slow"
 DEFAULT_DEADBAND_MILLISECONDS = 300
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
@@ -99,7 +99,7 @@ class PicoFlowSlow:
                 app_config = ujson.load(f)
         except:
             app_config = {}
-        self.actor_node_name = app_config.get("ActorNodeName", "default")
+        self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
