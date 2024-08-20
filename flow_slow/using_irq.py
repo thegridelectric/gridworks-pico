@@ -22,7 +22,7 @@ DEFAULT_DEADBAND_MILLISECONDS = 300
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
 
-PULSE_PIN = 1
+PULSE_PIN = 0 # This is pin 1
 
 
 
@@ -40,8 +40,6 @@ class PicoFlowSlow:
         self.hb = 0
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        # Set up interrupt
-        self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.heartbeat_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
@@ -81,7 +79,6 @@ class PicoFlowSlow:
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
-
 
     def save_app_config(self):
         config = {
@@ -135,6 +132,7 @@ class PicoFlowSlow:
     def start(self):
         self.connect_to_wifi()
         self.update_app_config()
+        self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
     
     def post_tick_delta(self, milliseconds: int):
