@@ -211,7 +211,7 @@ class PicoFlowSlow:
             response = urequests.post(url, data=json_payload, headers=headers)
             response.close()
         except Exception as e:
-            print(f"Error posting hz: {e}")
+            print(f"Error posting gpm: {e}")
         gc.collect()
         self.prev_gpm[pin_number] = self.exp_gpm[pin_number]
         
@@ -307,3 +307,8 @@ class PicoFlowSlow:
         if (current_timestamp_ms - latest_ms) / 10**3 > self.inactivity_timeout_s:
             self.post_hb()
             self.latest_timestamps_ms["hb"] = current_timestamp_ms
+
+
+if __name__ == "main":
+    p = PicoFlowSlow()
+    p.start()
