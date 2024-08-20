@@ -135,13 +135,11 @@ class PicoFlowSlow:
         #self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
         while(True):
-            current_state = self.pulse_pin.value()  # 0 for LOW, 1 for HIGH
-            print(current_state)
+            current_state = self.pulse_pin.value()
             self.post_tick_delta(milliseconds=current_state)
-            utime.sleep(0.1)
     
     def post_tick_delta(self, milliseconds: int):
-        url = self.base_url + f"/{self.actor_node_name}/tick-delta"
+        url = self.base_url + f"/{self.actor_node_name}/pin-state"
         payload = {
             "AboutNodeName": self.flow_node_name,
             "Milliseconds": milliseconds, 
