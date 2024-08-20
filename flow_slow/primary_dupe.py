@@ -22,9 +22,10 @@ DEFAULT_DEADBAND_MILLISECONDS = 300
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
 
-PULSE_PIN = 1
+PULSE_PIN = 0
+DUPE_PIN = 2
 
-
+DUPE_DEADBAND_MILLISECONDS = 50
 
 # *********************************************
 # CONNECT TO WIFI
@@ -36,12 +37,15 @@ class PicoFlowSlow:
         self.load_comms_config()
         self.load_app_config()
         self.latest_timestamp_ms = None
+        self.latest_dupe_ms = None
         self.latest_hb_ms = None
         self.hb = 0
-        # Define the pin 
+        # Define the pins
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        # Set up interrupt
+        self.dupe_pin = machine.Pin(DUPE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Set up interrupts
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
+        self.dupe_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.dupe_callback)
         self.heartbeat_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
@@ -169,13 +173,27 @@ class PicoFlowSlow:
             return
 
         # Calculate the time difference since the last pulse
+        if self.latest_dupe_ms is None:
+            return
+        
+        dupe_delta_ms = current_timestamp_ms -  self.latest_dupe_ms
         delta_ms = current_timestamp_ms - self.latest_timestamp_ms
-        if delta_ms > self.deadband_milliseconds:
+
+        if (dupe_delta_ms > DUPE_DEADBAND_MILLISECONDS) and \
+            (delta_ms > self.deadband_milliseconds):
             # Update the latest timestamp
             self.latest_timestamp_ms = current_timestamp_ms
             if delta_ms < self.no_flow_milliseconds:
                 # Post the tick delta if it exceeds the deadband threshold AND is less than the no flow milliseconds
                 self.post_tick_delta(milliseconds=delta_ms)
+    
+    def dupe_callback(self, pin):
+        """
+        Notice the end of the closed primary dry contact.
+        """
+        # Get the current timestamp in integer milliseconds
+        current_timestamp_ms = utime.time_ns() // 1_000_000
+        self.latest_dupe_ms = current_timestamp_ms
 
     def post_hb(self):
         url = self.base_url + f"/{self.actor_node_name}/hb"
