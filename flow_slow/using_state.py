@@ -134,9 +134,71 @@ class PicoFlowSlow:
         self.update_app_config()
         #self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
+        
+        self.statelist = ['up']
+        self.timestamps = [utime.time_ns()]
+        time_since_0 = utime.time_ns()
+        time_since_1 = utime.time_ns()
+        
         while(True):
+            
+            # States: going up -> up -> going down -> down
             current_state = self.pulse_pin.value()
-            self.post_tick_delta(milliseconds=current_state)
+            current_time = utime.time_ns()
+                        
+            # Up -> going down
+            if self.statelist[-1]=='up' and current_state==0:
+                self.timestamps.append(current_time)
+                self.statelist.append('going down')
+                time_since_0 = current_time
+
+            # Still in going down phase
+            elif self.statelist[-1]=='going down' and current_state==1:
+                time_since_0 = current_time
+                
+            # Going down -> down
+            elif self.statelist[-1]=='going down' and current_state==0:
+                if (current_time-time_since_0)/1e6 > 0.01: # if there has been more than 10ms of 0s
+                    self.timestamps.append(current_time)
+                    self.statelist.append('down')
+                
+            # Down -> going up
+            elif self.statelist[-1]=='down' and current_state==1:
+                self.timestamps.append(current_time)
+                self.statelist.append('going up')
+                time_since_1 = current_time
+
+            # Still in going up phase
+            elif self.statelist[-1]=='going up' and current_state==0:
+                time_since_1 = current_time
+
+            # Going up -> up
+            elif self.statelist[-1]=='going up' and current_state==1:
+                if (current_time-time_since_1)/1e9 > 0.01: # if there has been more than 10ms of 1s
+                    self.timestamps.append(current_time)
+                    self.statelist.append('up')
+            
+            # Post state list
+            if len(self.statelist)>=100:
+                print(self.statelist)
+                url = self.base_url + f"/{self.actor_node_name}/pin-state"
+                payload = {
+                    "AboutNodeName": self.flow_node_name,
+                    "StateList": self.statelist,
+                    "TimeStamps": self.timestamps,
+                    "TypeName": "statelist", 
+                    "Version": "000"
+                }
+                headers = {"Content-Type": "application/json"}
+                json_payload = ujson.dumps(payload)
+                try:
+                    response = urequests.post(url, data=json_payload, headers=headers)
+                    response.close()
+                except Exception as e:
+                    print(f"Error posting tick delta: {e}")
+                gc.collect()
+                self.statelist = ['up']
+                self.timestamps = [utime.time_ns()]
     
     def post_tick_delta(self, milliseconds: int):
         url = self.base_url + f"/{self.actor_node_name}/pin-state"
