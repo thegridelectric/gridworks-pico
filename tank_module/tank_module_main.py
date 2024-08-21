@@ -116,8 +116,9 @@ class TankModule:
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.pico_a_b = updated_config.get("PicoAB", self.pico_a_b)
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
+                self.samples = updated_config.get("Samples", self.samples)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
+                self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
