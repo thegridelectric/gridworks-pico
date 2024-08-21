@@ -1,0 +1,9 @@
+{
+    "WifiName": "NOKIA-9EF1",
+    "WifiPassword": "PASS", 
+    "MqttBroker": "192.168.18.84", 
+    "MqttUsername": "sara",
+    "MqttPassword": "pass",
+    "MqttPort": 1883
+
+}
