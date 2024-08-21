@@ -158,7 +158,7 @@ class PicoFlowSlow:
                 
             # Going down -> down
             elif self.statelist[-1]=='going down' and current_state==0:
-                if (current_time-time_since_0)/1e6 > 0.01: # if there has been more than 10ms of 0s
+                if (current_time-time_since_0)/1e6 > self.deadband_milliseconds: # if there has been more than 10ms of 0s
                     self.timestamps.append(current_time)
                     self.statelist.append('down')
                 
@@ -174,7 +174,7 @@ class PicoFlowSlow:
 
             # Going up -> up
             elif self.statelist[-1]=='going up' and current_state==1:
-                if (current_time-time_since_1)/1e9 > 0.01: # if there has been more than 10ms of 1s
+                if (current_time-time_since_1)/1e6 > self.deadband_milliseconds: # if there has been more than 10ms of 1s
                     self.timestamps.append(current_time)
                     self.statelist.append('up')
             
