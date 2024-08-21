@@ -18,20 +18,18 @@ APP_CONFIG_FILE = "app_config.json"
 # *********************************************
 DEFAULT_ACTOR_NAME = "pico-flow-hall"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
-DEFAULT_ALPHA = 0.1
-
+DEFAULT_ALPHA_TIMES_100 = 10
+DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
+DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
-DEFAULT_NO_FLOW_MILLISECONDS = 30_000
-
-PULSE_PIN = 0 # This is pin 1
-
+PULSE_PIN = 28 # 7 pins down on the hot side
 
 
 # *********************************************
 # CONNECT TO WIFI
 # *********************************************
 
-class PicoFlowSlow:
+class PicoFlowHall:
     def __init__(self):
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
@@ -42,6 +40,7 @@ class PicoFlowSlow:
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
+        self.latest_ts
                                                                  
     def load_comms_config(self):
         try:
@@ -77,31 +76,35 @@ class PicoFlowSlow:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
+        alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
+        self.alpha = alpha_times_100 / 100
+        self.async_capture_delta_hz = app_config.get("AsyncCaptureDeltaHz", DEFAULT_ASYNC_CAPTURE_DELTA_HZ)
+        self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
-        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
 
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
+            "AlphaTimes100": int(self.alpha * 100),
+            "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
+            "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/flow_slow_params"
+        url = self.base_url + "/flow_hall_params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
+            "AlphaTimes100": int(self.alpha * 100),
+            "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
+            "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "TypeName": "flow.slow.params",
+            "TypeName": "flow.hall.params",
             "Version": "000"
         }
         headers = {"Content-Type": "application/json"}
@@ -114,9 +117,10 @@ class PicoFlowSlow:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
-                self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
+                self.alpha = updated_config.get("AlphaTimes100", self.alpha * 100) / 100
+                self.async_capture_delta_hz = updated_config.get("AsyncCaptureDeltaHz", self.async_capture_delta_hz)
+                self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
-                self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -202,5 +206,5 @@ class PicoFlowSlow:
 
 
 if __name__ == "__main__":
-    p = PicoFlowSlow()
+    p = PicoFlowHall()
     p.start()
