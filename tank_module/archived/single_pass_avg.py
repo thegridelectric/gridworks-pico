@@ -22,7 +22,6 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
-DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
 # *********************************************
 # CONNECT TO WIFI
@@ -79,7 +78,6 @@ class TankModule:
         self.pico_a_b = app_config.get("PicoAB")
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
-        self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
         self.capture_offset_milliseconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
 
@@ -89,7 +87,6 @@ class TankModule:
             "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
-            "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
         }
         with open(APP_CONFIG_FILE, "w") as f:
@@ -103,7 +100,6 @@ class TankModule:
             "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
-            "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "CaptureOffsetMilliseconds": self.capture_offset_milliseconds,
             "TypeName": "tank.module.params",
@@ -121,7 +117,6 @@ class TankModule:
                 self.pico_a_b = updated_config.get("PicoAB", self.pico_a_b)
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.samples = updated_config.get("Samples", self.samples)
-                self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
                 self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
                 self.save_app_config()
@@ -167,28 +162,20 @@ class TankModule:
             print(f"Error posting hz: {e}")
 
     def adc0_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc0.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return sum(sample_averages)/self.num_sample_averages
+        readings = []
+        for _ in range(self.samples):
+            # Read the raw ADC value (0-65535)
+            readings.append(self.adc0.read_u16())
+        voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+        return int(10**6 * sum(voltages) / self.samples)
     
     def adc1_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return sum(sample_averages)/self.num_sample_averages
+        readings = []
+        for _ in range(self.samples):
+            # Read the raw ADC value (0-65535)
+            readings.append(self.adc1.read_u16())
+        voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+        return int(10**6 * sum(voltages) / self.samples)
     
     def sync_post_microvolts(self, timer):
         print("In timer")
@@ -234,6 +221,6 @@ class TankModule:
             utime.sleep_ms(100)
 
 
-if __name__ == "__main__":
-    t = TankModule()
-    t.start()
+# if __name__ == "__main__":
+#     t = TankModule()
+#     t.start()
