@@ -105,7 +105,7 @@ class PicoFlowHall:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/flow_hall_params"
+        url = self.base_url + "/flow-hall-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -159,8 +159,13 @@ class PicoFlowHall:
             self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
     
     def post_hz(self):
-        url = self.base_url + "/dist-flow/hz"
-        payload = {'MilliHz': int(self.exp_hz * 1e3), "TypeName": "hz", "Version": "000"}
+        url = self.base_url + f"/{self.actor_node_name}/hz"
+        payload = {
+            "AboutNodeName": self.flow_node_name,
+            "MilliHz": int(self.exp_hz * 1e3), 
+            "TypeName": "hz",
+              "Version": "001"
+            }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
         try:
@@ -173,7 +178,7 @@ class PicoFlowHall:
         self.prev_hz = self.exp_hz
             
     def post_ticklist(self):
-        url = self.base_url + "/dist-flow/ticklist"
+        url = self.base_url + f"/{self.actor_node_name}/ticklist"
         payload = {
             "AboutNodeName": self.flow_node_name,
             "RelativeTsMicroList": self.tick_delta_us_list,
