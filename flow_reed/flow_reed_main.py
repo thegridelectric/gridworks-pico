@@ -301,11 +301,10 @@ class PicoFlowReed:
     def start(self):
         self.connect_to_wifi()
         self.update_app_config()
-        #self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
         self.check_state()
 
-    
+
 
 if __name__ == "__main__":
     p = PicoFlowReed()
