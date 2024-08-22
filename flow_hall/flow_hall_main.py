@@ -42,6 +42,7 @@ class PicoFlowHall:
         self.exp_hz = 0
         self.prev_hz = 0
         self.publish_new = True
+        self.last_ticks_sent = utime.time()
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
@@ -146,12 +147,6 @@ class PicoFlowHall:
         )
         self.start_us = utime.ticks_us()
 
-    def start(self):
-        self.connect_to_wifi()
-        self.update_app_config()
-        self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
-        self.start_heartbeat_timer()
-
     def update_hz(self, delta_us):
         delta_ms = delta_us / 1e3
         hz = 1000 / delta_ms
@@ -196,7 +191,6 @@ class PicoFlowHall:
         self.tick_delta_us_list = []
         self.latest_us = None
 
-    
     def pulse_callback(self, pin):
         # Only add ticks when not actively publishing; otherwise adds too much noise
         if not self.actively_publishing:
@@ -234,6 +228,24 @@ class PicoFlowHall:
             self.post_hb()
             self.latest_hb_us = current_timestamp_us
 
+    def main_loop(self):
+        while True:
+            utime.sleep(0.2)
+            if self.publish_new:
+                self.post_hz()
+            if utime.time() - self.last_ticks_sent > self.publish_stamps_period_s:
+                self.actively_publishing = True
+                self.post_ticklist()
+                self.latest_us = None
+                self.last_ticks_sent = utime.time()
+                self.actively_publishing = False
+
+    def start(self):
+        self.connect_to_wifi()
+        self.update_app_config()
+        self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
+        self.start_heartbeat_timer()
+        self.main_loop()
 
 if __name__ == "__main__":
     p = PicoFlowHall()
