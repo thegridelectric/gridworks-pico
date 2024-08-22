@@ -22,8 +22,10 @@ DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
+DEFAULT_EXP_WEIGHTING_MS = 40
 PULSE_PIN = 28 # 7 pins down on the hot side
 
+NO_FLOW_MILLISECONDS = 1000
 
 # *********************************************
 # CONNECT TO WIFI
@@ -34,13 +36,18 @@ class PicoFlowHall:
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
         self.load_app_config()
-        self.latest_timestamp_ms = None
-        self.latest_hb_ms = None
+        self.latest_us = None
+        self.latest_hb_us = None
         self.hb = 0
+        self.exp_hz = 0
+        self.prev_hz = 0
+        self.publish_new = True
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
-        self.latest_ts
+        self.tick_delta_us_list = []
+        self.actively_publishing = False
+        self.start_us = None
                                                                  
     def load_comms_config(self):
         try:
@@ -81,7 +88,8 @@ class PicoFlowHall:
         self.async_capture_delta_hz = app_config.get("AsyncCaptureDeltaHz", DEFAULT_ASYNC_CAPTURE_DELTA_HZ)
         self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
-
+        self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
+    
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
@@ -90,6 +98,7 @@ class PicoFlowHall:
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
+            "ExpWeightingMs": self.exp_weighting_ms,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -104,6 +113,7 @@ class PicoFlowHall:
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
+            "ExpWeightingMs": self.exp_weighting_ms,
             "TypeName": "flow.hall.params",
             "Version": "000"
         }
@@ -121,6 +131,7 @@ class PicoFlowHall:
                 self.async_capture_delta_hz = updated_config.get("AsyncCaptureDeltaHz", self.async_capture_delta_hz)
                 self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
+                self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -133,52 +144,71 @@ class PicoFlowHall:
             mode=machine.Timer.PERIODIC,
             callback=self.check_hb
         )
+        self.start_us = utime.ticks_us()
 
     def start(self):
         self.connect_to_wifi()
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
+
+    def update_hz(self, delta_us):
+        delta_ms = delta_us / 1e3
+        hz = 1000 / delta_ms
+        if delta_ms > NO_FLOW_MILLISECONDS:
+            self.exp_hz = 0
+        elif self.exp_hz == 0:
+            self.exp_hz = hz
+        else:
+            tw_alpha = min(1, (delta_ms / self.exp_weighting_ms) * self.alpha)
+            self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
     
-    def post_tick_delta(self, milliseconds: int):
-        url = self.base_url + f"/{self.actor_node_name}/tick-delta"
-        payload = {
-            "AboutNodeName": self.flow_node_name,
-            "Milliseconds": milliseconds, 
-            "TypeName": "tick.delta", 
-            "Version": "000"
-        }
-        headers = {"Content-Type": "application/json"}
+    def post_hz(self):
+        url = self.base_url + "/dist-flow/hz"
+        payload = {'MilliHz': int(self.exp_hz * 1e3), "TypeName": "hz", "Version": "000"}
+        headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
             response.close()
         except Exception as e:
-            print(f"Error posting tick delta: {e}")
+            print(f"Error posting hz: {e}")
         gc.collect()
+        self.publish_new = False
+        self.prev_hz = self.exp_hz
+            
+    def post_ticklist(self):
+        url = self.base_url + "/dist-flow/ticklist"
+        payload = {
+            "AboutNodeName": self.flow_node_name,
+            "RelativeTsMicroList": self.tick_delta_us_list,
+            "TypeName": "ticklist", 
+            "Version": "001"
+            }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting hz: {e}")
+        gc.collect()
+        self.tick_delta_us_list = []
+        self.latest_us = None
+
     
     def pulse_callback(self, pin):
-        """
-        Callback function to record the time interval in milliseconds between two 
-        ticks of a reed-style flow meter. Ignores false positives due to jitter 
-        occurring within the deadband threshold.
-        """
-        # Get the current timestamp in integer milliseconds
-        current_timestamp_ms = utime.time_ns() // 1_000_000
-
-        if self.latest_timestamp_ms is None:
-            # Initialize the timestamp if this is the first pulse for this pin
-            self.latest_timestamp_ms = current_timestamp_ms
-            return
-
-        # Calculate the time difference since the last pulse
-        delta_ms = current_timestamp_ms - self.latest_timestamp_ms
-        if delta_ms > self.deadband_milliseconds:
-            # Update the latest timestamp
-            self.latest_timestamp_ms = current_timestamp_ms
-            if delta_ms < self.no_flow_milliseconds:
-                # Post the tick delta if it exceeds the deadband threshold AND is less than the no flow milliseconds
-                self.post_tick_delta(milliseconds=delta_ms)
+        # Only add ticks when not actively publishing; otherwise adds too much noise
+        if not self.actively_publishing:
+            # Get the current timestamp in integer milliseconds
+            current_timestamp_us = utime.ticks_us()
+            if self.latest_us is None:
+                 # Initialize the timestamp if this is the first pulse for this pin
+                self.latest_us = current_timestamp_us
+                return
+            delta_us = current_timestamp_us - self.latest_us
+            self.update_hz(delta_us)
+            self.tick_delta_us_list.append(delta_us)
 
     def post_hb(self):
         url = self.base_url + f"/{self.actor_node_name}/hb"
@@ -198,11 +228,11 @@ class PicoFlowHall:
         """
         Publish a heartbeat, assuming no other messages sent within inactivity timeout
         """
-        latest_ms = max((value for value in [self.latest_timestamp_ms, self.latest_hb_ms] if value is not None), default=0)
-        current_timestamp_ms = utime.time_ns() // 1_000_000
-        if (current_timestamp_ms - latest_ms) / 10**3 > self.inactivity_timeout_s:
+        latest_us = max((value for value in [self.latest_us, self.latest_hb_us] if value is not None), default=0)
+        current_timestamp_us = utime.ticks_us()
+        if (current_timestamp_us - latest_us) / 1e6 > self.inactivity_timeout_s:
             self.post_hb()
-            self.latest_hb_ms = current_timestamp_ms
+            self.latest_hb_us = current_timestamp_us
 
 
 if __name__ == "__main__":
