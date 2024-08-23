@@ -22,7 +22,6 @@ DEFAULT_DEADBAND_MILLISECONDS = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
 
-
 DEFAULT_PUBLISH_GPM = True
 DEFAULT_PUBLISH_TICK_DELTAS = False
 
@@ -57,7 +56,6 @@ class PicoFlowReed:
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
-
                                                                  
     def load_comms_config(self):
         try:
@@ -253,25 +251,32 @@ class PicoFlowReed:
     def check_state(self):
         ms_since_0 = utime.ticks_ms()
         ms_since_1 = utime.ticks_ms()
+        self.latest_timestamp_ms = utime.ticks_ms()
+        first_tick = True
 
         while(True):  
             # States: going up -> up -> going down -> down
             current_reading = self.pulse_pin.value()
             current_time_ms = utime.ticks_ms()
-                        
+        
             # Down -> going up
             if self.pin_state == PinState.DOWN and current_reading == 1:
                 # This is the tick we track for tick deltas
                 #use the delta we need for calculating gpm and/or tick deltas
                 delta_ms = current_time_ms - self.latest_timestamp_ms
                 self.latest_timestamp_ms = current_time_ms
-                self.update_gpm(delta_ms)
-                if  (self.prev_gpm is None) or \
-                    abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
-                    self.post_gpm()
-                if delta_ms < self.no_flow_milliseconds:
-                    self.post_tick_delta(delta_ms)
+                if not first_tick:
+                    self.update_gpm(delta_ms)
+                    if  (self.prev_gpm is None) or \
+                        abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
+                        self.post_gpm()
+                    if delta_ms < self.no_flow_milliseconds:
+                        self.post_tick_delta(delta_ms)
                 ms_since_1 = current_time_ms
+                self.pin_state = PinState.GOING_UP
+
+            if first_tick:
+                first_tick = False
 
             # Still in going up phase
             elif self.pin_state == PinState.GOING_UP  and current_reading == 0:
@@ -285,6 +290,7 @@ class PicoFlowReed:
             # Up -> going down
             elif self.pin_state == PinState.UP and current_reading == 0:
                 self.pin_state = PinState.GOING_DOWN
+                ms_since_0 = current_time_ms
 
             # Still in going down phase
             elif self.pin_state == PinState.GOING_DOWN  and current_reading == 1:
