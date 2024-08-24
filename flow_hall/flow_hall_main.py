@@ -199,7 +199,7 @@ class PicoFlowHall:
     def pulse_callback(self, pin):
         # Only add ticks when not actively publishing; otherwise adds too much noise
         if not self.actively_publishing:
-            # Get the current timestamp in integer milliseconds
+            # Get the current timestamp in integer microseconds
             current_timestamp_us = utime.ticks_us()
             if self.latest_us is None:
                  # Initialize the timestamp if this is the first pulse for this pin
