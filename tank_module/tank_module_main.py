@@ -42,6 +42,7 @@ class TankModule:
         self.node_names = []
 
         self.sync_report_timer = machine.Timer(-1)
+        self.update_code_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
         try:
@@ -128,6 +129,27 @@ class TankModule:
             response.close()
         except Exception as e:
             print(f"Error posting tick delta: {e}")
+    
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                response_json = ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
     
     def set_names(self):
         if self.actor_node_name is None:
@@ -220,6 +242,14 @@ class TankModule:
             mode=machine.Timer.PERIODIC,
             callback=self.sync_post_microvolts
         )
+
+        # start the synchronous check for code updates
+        self.update_code_timer.init(
+            period=60000, # every minute
+            mode=machine.Timer.PERIODIC,
+            callback=self.update_code
+        )
+
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
         while True:
