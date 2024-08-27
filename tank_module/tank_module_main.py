@@ -5,6 +5,7 @@ import ujson
 import urequests
 import utime
 import gc
+import os
 from utils import get_hw_uid
 
 # *********************************************
@@ -128,8 +129,12 @@ class TankModule:
                 self.save_app_config()
             response.close()
         except Exception as e:
-            print(f"Error posting tick delta: {e}")
-    
+            print(f"Error sending/receiving parameters to/from server: {e}")
+            if 'main_previous.py' in os.listdir():
+                # Reverting to previous code
+                os.rename('main_previous.py', 'main_revert.py')
+                machine.reset()
+
     def update_code(self, timer):
         url = self.base_url + "/code-update"
         payload = {
