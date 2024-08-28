@@ -25,6 +25,8 @@ DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
 PULSE_PIN = 28 # 7 pins down on the hot side
 
+CODE_UPDATE_PERIOD_S = 60
+
 NO_FLOW_MILLISECONDS = 1000
 
 # *********************************************
@@ -46,6 +48,7 @@ class PicoFlowHall:
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
+        self.update_code_timer = machine.Timer(-1)
         self.tick_delta_us_list = []
         self.actively_publishing = False
         self.start_us = None
@@ -138,6 +141,27 @@ class PicoFlowHall:
         except Exception as e:
             print(f"Error posting tick delta: {e}")
 
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                response_json = ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+
     def start_heartbeat_timer(self):
         # Initialize the timer to call self.check_hb periodically
         self.heartbeat_timer.init(
@@ -146,6 +170,14 @@ class PicoFlowHall:
             callback=self.check_hb
         )
         self.start_us = utime.ticks_us()
+
+    def start_code_update_timer(self):
+        # start the periodic check for code updates
+        self.update_code_timer.init(
+            period=CODE_UPDATE_PERIOD_S * 1000,
+            mode=machine.Timer.PERIODIC,
+            callback=self.update_code
+        )
 
     def update_hz(self, delta_us):
         delta_ms = delta_us / 1e3
@@ -250,6 +282,7 @@ class PicoFlowHall:
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         self.start_heartbeat_timer()
+        self.start_code_update_timer()
         self.main_loop()
 
 if __name__ == "__main__":

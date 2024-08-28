@@ -32,6 +32,8 @@ DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
 PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 
+CODE_UPDATE_PERIOD_S = 60
+
 class PinState:
     GOING_UP = 0
     UP = 1
@@ -56,6 +58,7 @@ class PicoFlowReed:
         # Define the pin 
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.heartbeat_timer = machine.Timer(-1)
+        self.update_code_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
         try:
@@ -161,6 +164,27 @@ class PicoFlowReed:
             response.close()
         except Exception as e:
             print(f"Error posting flow.reed.params: {e}")
+
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                response_json = ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
     
     def post_gpm(self):
         if not self.publish_gpm:
@@ -247,6 +271,14 @@ class PicoFlowReed:
             mode=machine.Timer.PERIODIC,
             callback=self.check_hb
         )
+    
+    def start_code_update_timer(self):
+        # start the periodic check for code updates
+        self.update_code_timer.init(
+            period=CODE_UPDATE_PERIOD_S * 1000,
+            mode=machine.Timer.PERIODIC,
+            callback=self.update_code
+        )
 
     def check_state(self):
         ms_since_0 = utime.ticks_ms()
@@ -308,6 +340,7 @@ class PicoFlowReed:
         self.connect_to_wifi()
         self.update_app_config()
         self.start_heartbeat_timer()
+        self.start_code_update_timer()
         self.check_state()
 
 
