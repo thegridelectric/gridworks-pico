@@ -19,6 +19,7 @@ APP_CONFIG_FILE = "app_config.json"
 # *********************************************
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
+CODE_UPDATE_PERIOD_S = 60
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
@@ -250,7 +251,7 @@ class TankModule:
 
         # start the synchronous check for code updates
         self.update_code_timer.init(
-            period=60000, # every minute
+            period=CODE_UPDATE_PERIOD_S * 1000,
             mode=machine.Timer.PERIODIC,
             callback=self.update_code
         )
