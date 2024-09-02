@@ -29,6 +29,7 @@ DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
 PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 
+POST_LIST_LENGTH = 20
 CODE_UPDATE_PERIOD_S = 60
 KEEPALIVE_TIMER_PERIOD_S = 3
 
@@ -220,7 +221,6 @@ class PicoFlowReed:
         gc.collect()
         self.relative_ms_list = []
         self.first_tick_ms = None
-    
 
     def keep_alive(self, timer):
         """
@@ -256,6 +256,9 @@ class PicoFlowReed:
         self.first_tick_ms = None
 
         while(True):  
+            # Publish the list of relative ticks as a function of number of ticks
+            if len(self.relative_ms_list) > POST_LIST_LENGTH:
+                self.post_ticklist_reed()
             # States: down -> going up -> up -> going down -> down
             current_reading = self.pulse_pin.value()
             current_time_ms = utime.ticks_ms()
@@ -273,9 +276,7 @@ class PicoFlowReed:
                     delta_ms = relative_ms - self.relative_ms_list[-1]
                     self.update_gpm(delta_ms)
                     self.relative_ms_list.append(relative_ms)
-                    
-                    if relative_ms < self.no_flow_milliseconds:
-                        self.post_ticklist_reed(relative_ms)
+
                     
             # going up -> going up
             elif self.pin_state == PinState.GOING_UP  and current_reading == 0:
