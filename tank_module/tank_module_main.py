@@ -235,7 +235,6 @@ class TankModule:
                     file.write(python_code)
                 machine.reset()
     
-
     def start_sync_report_timer(self):
          # start the synchronous reporting
         self.sync_report_timer.init(

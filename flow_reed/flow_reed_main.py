@@ -22,8 +22,6 @@ DEFAULT_DEADBAND_MILLISECONDS = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
 
-DEFAULT_PUBLISH_GPM = True
-
 DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
@@ -104,7 +102,6 @@ class PicoFlowReed:
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
-        self.publish_gpm = app_config.get("PublishGpm", DEFAULT_PUBLISH_GPM)
         alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
         gallons_per_tick_times_10000 = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000)
         self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
@@ -119,7 +116,6 @@ class PicoFlowReed:
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "PublishGpm": self.publish_gpm,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
@@ -136,12 +132,11 @@ class PicoFlowReed:
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "PublishGpm": self.publish_gpm,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
             "TypeName": "flow.reed.params",
-            "Version": "001"
+            "Version": "002"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -156,7 +151,6 @@ class PicoFlowReed:
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
-                self.publish_gpm = updated_config.get("PublishGpm", self.publish_gpm)
                 gallons_per_tick_times_10000 = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000))
                 self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
                 alpha_times_100 = updated_config.get("AlphaTimes100", int(self.alpha * 100))
@@ -169,8 +163,6 @@ class PicoFlowReed:
             print(f"Error posting flow.reed.params: {e}")
     
     def post_gpm(self):
-        if not self.publish_gpm:
-            return
         url = self.base_url +  f"/{self.actor_node_name}/gpm"
         payload = {
             "AboutNodeName": self.flow_node_name,
@@ -207,6 +199,8 @@ class PicoFlowReed:
             self.post_gpm()
     
     def post_ticklist_reed(self):
+        if self.first_tick_ms is None:
+            return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "AboutNodeName": self.flow_node_name,
