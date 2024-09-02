@@ -1,0 +1,5 @@
+{
+    "WifiName": "GridWorks",
+    "WifiPassword": "PASS", 
+    "BaseUrl": "http://fir2.local:8000"
+}
