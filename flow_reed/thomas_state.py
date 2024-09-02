@@ -181,7 +181,7 @@ class PicoFlowSlow:
             # Post state list
             if len(self.statelist)>=100:
                 print(self.statelist)
-                url = self.base_url + f"/{self.actor_node_name}/pin-state"
+                url = self.base_url + f"/{self.actor_node_name}/statelist"
                 payload = {
                     "AboutNodeName": self.flow_node_name,
                     "StateList": self.statelist,

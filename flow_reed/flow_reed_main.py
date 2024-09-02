@@ -23,7 +23,6 @@ DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 30_000
 
 DEFAULT_PUBLISH_GPM = True
-DEFAULT_PUBLISH_TICK_DELTAS = False
 
 DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
@@ -33,6 +32,7 @@ PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 
 CODE_UPDATE_PERIOD_S = 60
+KEEPALIVE_TIMER_PERIOD_S = 3
 
 class PinState:
     GOING_UP = 0
@@ -46,18 +46,25 @@ class PinState:
 
 class PicoFlowReed:
     def __init__(self):
+        # Define the pin 
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
         self.load_app_config()
-        self.latest_timestamp_ms = None
-        self.latest_hb_ms = None
-        self.hb = 0
-        self.pin_state = PinState.UP
+        # variables for tracking async reports of simple exponential weighted frequency
         self.exp_gpm = 0
         self.prev_gpm = None
-        # Define the pin 
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.heartbeat_timer = machine.Timer(-1)
+        self.gpm_posted_time = utime.time()
+
+        # variables for tracking tick list
+        self.last_ticks_sent = utime.time()
+        self.latest_timestamp_ms = None
+        self.first_tick_ms = None
+        self.relative_ms_list = []
+
+        self.pin_state = None # will be initialized as PinState.DOWN
+
+        self.keepalive_timer = machine.Timer(-1)
         self.update_code_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
@@ -98,7 +105,6 @@ class PicoFlowReed:
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
         self.publish_gpm = app_config.get("PublishGpm", DEFAULT_PUBLISH_GPM)
-        self.publish_tick_deltas = app_config.get("PublishTickDeltas", DEFAULT_PUBLISH_TICK_DELTAS)
         alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
         gallons_per_tick_times_10000 = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000)
         self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
@@ -114,7 +120,6 @@ class PicoFlowReed:
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "PublishGpm": self.publish_gpm,
-            "PublishTickDeltas": self.publish_tick_deltas,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
@@ -132,7 +137,6 @@ class PicoFlowReed:
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "PublishGpm": self.publish_gpm,
-            "PublishTickDeltas": self.publish_tick_deltas,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
@@ -153,7 +157,6 @@ class PicoFlowReed:
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
                 self.publish_gpm = updated_config.get("PublishGpm", self.publish_gpm)
-                self.publish_tick_deltas = updated_config.get("PublishTickDeltas", self.publish_tick_deltas)
                 gallons_per_tick_times_10000 = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000))
                 self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
                 alpha_times_100 = updated_config.get("AlphaTimes100", int(self.alpha * 100))
@@ -164,27 +167,6 @@ class PicoFlowReed:
             response.close()
         except Exception as e:
             print(f"Error posting flow.reed.params: {e}")
-
-    def update_code(self, timer):
-        url = self.base_url + "/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "000"
-        }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                response_json = ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
     
     def post_gpm(self):
         if not self.publish_gpm:
@@ -205,6 +187,7 @@ class PicoFlowReed:
             print(f"Error posting hz: {e}")
         gc.collect()
         self.prev_gpm = self.exp_gpm
+        self.gpm_posted_time = utime.time()
 
     def update_gpm(self, delta_ms: int):
         hz = 1000 / delta_ms
@@ -217,15 +200,19 @@ class PicoFlowReed:
         else:
             tw_alpha = min(1, (delta_ms / TIME_WEIGHTING_MS) * self.alpha)
             self.exp_gpm= tw_alpha * gpm + (1 - tw_alpha) * self.exp_gpm
+        
+        if  self.prev_gpm is None:
+            self.post_gpm()
+        elif abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
+            self.post_gpm()
     
-    def post_tick_delta(self, milliseconds: int):
-        if not self.publish_tick_deltas:
-            return
-        url = self.base_url + f"/{self.actor_node_name}/tick-delta"
+    def post_ticklist_reed(self):
+        url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "AboutNodeName": self.flow_node_name,
-            "Milliseconds": int(milliseconds), 
-            "TypeName": "tick.delta", 
+            "PicoStartMillisecond": self.first_tick_ms,
+            "RelativeMillisecondList": self.relative_ms_list, 
+            "TypeName": "ticklist.reed", 
             "Version": "000"
         }
 
@@ -237,40 +224,108 @@ class PicoFlowReed:
         except Exception as e:
             print(f"Error posting tick delta: {e}")
         gc.collect()
+        self.relative_ms_list = []
+        self.first_tick_ms = None
     
 
-
-    def post_hb(self):
-        url = self.base_url + f"/{self.actor_node_name}/hb"
-        self.hb = (self.hb + 1) % 16
-        hbstr = "{:x}".format(self.hb)
-        payload =  {"MyHex": hbstr, "TypeName": "hb", "Version": "000"}
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting hb {e}")
-        gc.collect()
-    
-    def check_hb(self, timer):
+    def keep_alive(self, timer):
         """
-        Publish a heartbeat, assuming no other messages sent within inactivity timeout
+        Post gpm, assuming no other messages sent within inactivity timeout
         """
-        latest_ms = max((value for value in [self.latest_timestamp_ms, self.latest_hb_ms] if value is not None), default=0)
-        current_timestamp_ms = utime.time_ns() // 1_000_000
-        if (current_timestamp_ms - latest_ms) / 10**3 > self.inactivity_timeout_s:
-            self.post_hb()
-            self.latest_hb_ms = current_timestamp_ms
+        if utime.time() - self.gpm_posted_time > self.inactivity_timeout_s:
+            self.post_gpm()
 
-    def start_heartbeat_timer(self):
+    def start_keepalive_timer(self):
         # Initialize the timer to call self.check_hb periodically
-        self.heartbeat_timer.init(
-            period=3000, 
+        self.keepalive_timer.init(
+            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.check_hb
+            callback=self.keep_alive
         )
+    
+    def state_init(self):
+        in_down_state = False
+        reading = self.pulse_pin.value()
+        while not in_down_state:
+            utime.sleep_ms(self.deadband_milliseconds)
+            prev_reading = reading
+            reading = self.pulse_pin.value()
+            print(f"reading is {reading}")
+            if prev_reading == 0 and reading == 0:
+                in_down_state = True
+        self.pin_state = PinState.DOWN
+            
+
+    def main_loop(self):
+        time_since_0 = utime.ticks_ms()
+        time_since_1 = utime.ticks_ms()
+        self.first_tick_ms = None
+
+        while(True):  
+            # States: down -> going up -> up -> going down -> down
+            current_reading = self.pulse_pin.value()
+            current_time_ms = utime.ticks_ms()
+        
+            # down -> going up
+            if self.pin_state == PinState.DOWN and current_reading == 1:
+                self.pin_state = PinState.GOING_UP
+                time_since_1 = current_time_ms
+                # This is the state change we track for tick deltas
+                if self.first_tick_ms is None:
+                    self.first_tick_ms = current_time_ms
+                    self.relative_ms_list.append(0)
+                else:
+                    relative_ms = current_time_ms - self.first_tick_ms
+                    delta_ms = relative_ms - self.relative_ms_list[-1]
+                    self.update_gpm(delta_ms)
+                    self.relative_ms_list.append(relative_ms)
+                    
+                    if relative_ms < self.no_flow_milliseconds:
+                        self.post_ticklist_reed(relative_ms)
+                    
+            # going up -> going up
+            elif self.pin_state == PinState.GOING_UP  and current_reading == 0:
+                time_since_1 = current_time_ms
+
+            # going up -> up
+            elif self.pin_state == PinState.GOING_UP and current_reading == 1:
+                if (current_time_ms - time_since_1) > self.deadband_milliseconds: # if there has been more than 10ms of 1s
+                    self.pin_state = PinState.UP
+            
+            # up -> going down
+            elif self.pin_state == PinState.UP and current_reading == 0:
+                self.pin_state = PinState.GOING_DOWN
+                time_since_0 = current_time_ms
+
+            # going down -> going down
+            elif self.pin_state == PinState.GOING_DOWN  and current_reading == 1:
+                time_since_0 = current_time_ms
+                
+            # Going down -> down
+            elif self.pin_state == PinState.GOING_DOWN and current_reading == 0:
+                if (current_time_ms - time_since_0) > self.deadband_milliseconds: # if there has been more than 10ms of 0s
+                    self.pin_state = PinState.DOWN
+
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
     
     def start_code_update_timer(self):
         # start the periodic check for code updates
@@ -280,69 +335,13 @@ class PicoFlowReed:
             callback=self.update_code
         )
 
-    def check_state(self):
-        ms_since_0 = utime.ticks_ms()
-        ms_since_1 = utime.ticks_ms()
-        self.latest_timestamp_ms = utime.ticks_ms()
-        first_tick = True
-
-        while(True):  
-            # States: going up -> up -> going down -> down
-            current_reading = self.pulse_pin.value()
-            current_time_ms = utime.ticks_ms()
-        
-            # Down -> going up
-            if self.pin_state == PinState.DOWN and current_reading == 1:
-                # This is the tick we track for tick deltas
-                #use the delta we need for calculating gpm and/or tick deltas
-                delta_ms = current_time_ms - self.latest_timestamp_ms
-                self.latest_timestamp_ms = current_time_ms
-                if not first_tick:
-                    self.update_gpm(delta_ms)
-                    if  (self.prev_gpm is None) or \
-                        abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
-                        self.post_gpm()
-                    if delta_ms < self.no_flow_milliseconds:
-                        self.post_tick_delta(delta_ms)
-                ms_since_1 = current_time_ms
-                self.pin_state = PinState.GOING_UP
-
-            if first_tick:
-                first_tick = False
-
-            # Still in going up phase
-            elif self.pin_state == PinState.GOING_UP  and current_reading == 0:
-                ms_since_1 = current_time_ms
-
-            # Going up -> up
-            elif self.pin_state == PinState.GOING_UP and current_reading == 1:
-                if (current_time_ms - ms_since_1) > self.deadband_milliseconds: # if there has been more than 10ms of 1s
-                    self.pin_state = PinState.UP
-            
-            # Up -> going down
-            elif self.pin_state == PinState.UP and current_reading == 0:
-                self.pin_state = PinState.GOING_DOWN
-                ms_since_0 = current_time_ms
-
-            # Still in going down phase
-            elif self.pin_state == PinState.GOING_DOWN  and current_reading == 1:
-                ms_since_0 = current_time_ms
-                
-            # Going down -> down
-            elif self.pin_state == PinState.GOING_DOWN and current_reading == 0:
-                if (current_time_ms - ms_since_0) > self.deadband_milliseconds: # if there has been more than 10ms of 0s
-                    self.pin_state = PinState.DOWN
-            
-            #print(f"State is {self.pin_state}")
-            
-
     def start(self):
         self.connect_to_wifi()
         self.update_app_config()
-        self.start_heartbeat_timer()
+        self.start_keepalive_timer()
         self.start_code_update_timer()
-        self.check_state()
-
+        self.state_init()
+        self.main_loop()
 
 
 if __name__ == "__main__":

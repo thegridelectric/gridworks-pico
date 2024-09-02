@@ -32,6 +32,7 @@ DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
 class TankModule:
     def __init__(self):
+        self.update_code_timer = machine.Timer(-1)
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
         self.load_app_config()
@@ -42,9 +43,8 @@ class TankModule:
         self.mv0 = None
         self.mv1 = None
         self.node_names = []
-
         self.sync_report_timer = machine.Timer(-1)
-        self.update_code_timer = machine.Timer(-1)
+        
                                                                  
     def load_comms_config(self):
         try:
@@ -136,27 +136,6 @@ class TankModule:
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
-    def update_code(self, timer):
-        url = self.base_url + "/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "000"
-        }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                response_json = ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
-    
     def set_names(self):
         if self.actor_node_name is None:
             raise Exception("Needs actor node name or pico number to run. Reboot!")
@@ -234,28 +213,46 @@ class TankModule:
             response.close()
         except Exception as e:
             print(f"Error posting hz: {e}")
+    
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+    
 
-    def start(self):
-        self.connect_to_wifi()
-        self.update_app_config()
-        self.set_names()
-        print(f"sleeping for {self.capture_offset_milliseconds}")
-        utime.sleep_ms(self.capture_offset_milliseconds)
-
-        # start the synchronous reporting
+    def start_sync_report_timer(self):
+         # start the synchronous reporting
         self.sync_report_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.sync_post_microvolts
         )
 
-        # start the synchronous check for code updates
+    def start_code_update_timer(self):
+        # start the periodic check for code updates
         self.update_code_timer.init(
             period=CODE_UPDATE_PERIOD_S * 1000,
             mode=machine.Timer.PERIODIC,
             callback=self.update_code
         )
-
+    
+    def main_loop(self):
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
         while True:
@@ -268,6 +265,16 @@ class TankModule:
                 self.async_post_microvolts(idx = 1)
                 self.prev_mv1 = self.mv1
             utime.sleep_ms(100)
+
+    def start(self):
+        self.connect_to_wifi()
+        self.update_app_config()
+        self.set_names()
+        print(f"sleeping for {self.capture_offset_milliseconds}")
+        utime.sleep_ms(self.capture_offset_milliseconds)
+        self.start_sync_report_timer()
+        self.start_code_update_timer()
+        self.main_loop()
 
 
 if __name__ == "__main__":

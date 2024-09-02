@@ -23,35 +23,38 @@ DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
+
+
 PULSE_PIN = 28 # 7 pins down on the hot side
-
 CODE_UPDATE_PERIOD_S = 60
-
+KEEPALIVE_TIMER_PERIOD_S = 3
 NO_FLOW_MILLISECONDS = 1000
-
+ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS = 200
+MAIN_LOOP_MILLISECONDS = 100
 # *********************************************
 # CONNECT TO WIFI
 # *********************************************
 
 class PicoFlowHall:
     def __init__(self):
+        # Define the pin 
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
         self.load_app_config()
-        self.latest_us = None
-        self.latest_hb_us = None
-        self.hb = 0
+        # variables for tracking async reports of simple exponential weighted frequency
         self.exp_hz = 0
-        self.prev_hz = 0
-        self.publish_new = True
+        self.prev_hz = None
+        self.hz_posted_time = utime.time()
+        # variables for tracking tick list
         self.last_ticks_sent = utime.time()
-        # Define the pin 
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.heartbeat_timer = machine.Timer(-1)
-        self.update_code_timer = machine.Timer(-1)
-        self.tick_delta_us_list = []
+        # there is a time lag between posting the ticks and starting off capturing ticks
+        # this is the microseconds of the first tick in a batch
+        self.first_tick_us = None
+        self.relative_us_list = []
         self.actively_publishing = False
-        self.start_us = None
+        self.keepalive_timer = machine.Timer(-1)
+        self.update_code_timer = machine.Timer(-1)
                                                                  
     def load_comms_config(self):
         try:
@@ -141,54 +144,13 @@ class PicoFlowHall:
         except Exception as e:
             print(f"Error posting tick delta: {e}")
 
-    def update_code(self, timer):
-        url = self.base_url + "/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "000"
-        }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                response_json = ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
-
-    def start_heartbeat_timer(self):
-        # Initialize the timer to call self.check_hb periodically
-        self.heartbeat_timer.init(
-            period=3000, 
+    def start_keepalive_timer(self):
+        # Initialize the timer to call self.keep_alive periodically
+        self.keepalive_timer.init(
+            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.check_hb
+            callback=self.keep_alive
         )
-        self.start_us = utime.ticks_us()
-
-    def start_code_update_timer(self):
-        # start the periodic check for code updates
-        self.update_code_timer.init(
-            period=CODE_UPDATE_PERIOD_S * 1000,
-            mode=machine.Timer.PERIODIC,
-            callback=self.update_code
-        )
-
-    def update_hz(self, delta_us):
-        delta_ms = delta_us / 1e3
-        hz = 1000 / delta_ms
-        if delta_ms > NO_FLOW_MILLISECONDS:
-            self.exp_hz = 0
-        elif self.exp_hz == 0:
-            self.exp_hz = hz
-        else:
-            tw_alpha = min(1, (delta_ms / self.exp_weighting_ms) * self.alpha)
-            self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
     
     def post_hz(self):
         url = self.base_url + f"/{self.actor_node_name}/hz"
@@ -205,15 +167,31 @@ class PicoFlowHall:
             response.close()
         except Exception as e:
             print(f"Error posting hz: {e}")
-        gc.collect()
-        self.publish_new = False
         self.prev_hz = self.exp_hz
+        self.hz_posted_time = utime.time()
+
+    def update_hz(self, delta_us):
+        delta_ms = delta_us / 1e3
+        hz = 1e6 / delta_us
+        if delta_ms > NO_FLOW_MILLISECONDS:
+            self.exp_hz = 0
+        elif self.exp_hz == 0:
+            self.exp_hz = hz
+        else:
+            tw_alpha = min(1, (delta_ms / self.exp_weighting_ms) * self.alpha)
+            self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
+        
+        if self.prev_hz is None:
+            self.post_hz()
+        elif abs(self.exp_hz - self.prev_hz) > self.async_capture_delta_hz:
+            self.post_hz()
             
     def post_ticklist(self):
         url = self.base_url + f"/{self.actor_node_name}/ticklist"
         payload = {
             "AboutNodeName": self.flow_node_name,
-            "RelativeTsMicroList": self.tick_delta_us_list,
+            "PicoStartMillisecond": self.first_tick_us // 1000,
+            "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist", 
             "Version": "001"
             }
@@ -225,63 +203,81 @@ class PicoFlowHall:
         except Exception as e:
             print(f"Error posting hz: {e}")
         gc.collect()
-        self.tick_delta_us_list = []
-        self.latest_us = None
+        self.relative_us_list = []
+        self.first_tick_us = None
 
     def pulse_callback(self, pin):
         # Only add ticks when not actively publishing; otherwise adds too much noise
         if not self.actively_publishing:
             # Get the current timestamp in integer microseconds
             current_timestamp_us = utime.ticks_us()
-            if self.latest_us is None:
+            if self.first_tick_us is None:
                  # Initialize the timestamp if this is the first pulse for this pin
-                self.latest_us = current_timestamp_us
+                self.first_tick_us = current_timestamp_us
+                self.relative_us_list.append(0)
                 return
-            delta_us = current_timestamp_us - self.latest_us
+            relative_us = current_timestamp_us - self.first_tick_us
+            delta_us = relative_us - self.relative_us_list[-1]
             self.update_hz(delta_us)
-            self.tick_delta_us_list.append(delta_us)
+            self.relative_us_list.append(relative_us)
 
-    def post_hb(self):
-        url = self.base_url + f"/{self.actor_node_name}/hb"
-        self.hb = (self.hb + 1) % 16
-        hbstr = "{:x}".format(self.hb)
-        payload =  {"MyHex": hbstr, "TypeName": "hb", "Version": "000"}
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting hb {e}")
-        gc.collect()
+    def keep_alive(self, timer):
+        """
+        Post Hz, assuming no other messages sent within inactivity timeout
+        """
+        if utime.time() - self.hz_posted_time > self.inactivity_timeout_s:
+            self.post_hz()
     
-    def check_hb(self, timer):
-        """
-        Publish a heartbeat, assuming no other messages sent within inactivity timeout
-        """
-        latest_us = max((value for value in [self.latest_us, self.latest_hb_us] if value is not None), default=0)
-        current_timestamp_us = utime.ticks_us()
-        if (current_timestamp_us - latest_us) / 1e6 > self.inactivity_timeout_s:
-            self.post_hb()
-            self.latest_hb_us = current_timestamp_us
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+    
+    def start_code_update_timer(self):
+        # start the periodic check for code updates
+        self.update_code_timer.init(
+            period=CODE_UPDATE_PERIOD_S * 1000,
+            mode=machine.Timer.PERIODIC,
+            callback=self.update_code
+        )
 
     def main_loop(self):
         while True:
-            utime.sleep(0.2)
-            if self.publish_new:
-                self.post_hz()
+            utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
             if utime.time() - self.last_ticks_sent > self.publish_stamps_period_s:
-                self.actively_publishing = True
-                self.post_ticklist()
-                self.latest_us = None
-                self.last_ticks_sent = utime.time()
-                self.actively_publishing = False
+                # Only post if there is some flow
+                if len(self.relative_us_list) > 0:
+                    self.actively_publishing = True
+                    self.post_ticklist()
+                    self.last_ticks_sent = utime.time()
+                    # wait longer after the post before starting to track ticks
+                    # to let the time disturbances reduce
+                    utime.sleep_ms(ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS)
+                    self.actively_publishing = False
 
     def start(self):
         self.connect_to_wifi()
         self.update_app_config()
+       
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
-        self.start_heartbeat_timer()
+        # report 0 hz every self.inactivity_timeout_s (default 60)
+        self.start_keepalive_timer()
         self.start_code_update_timer()
         self.main_loop()
 
