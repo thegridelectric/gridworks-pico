@@ -1,7 +1,8 @@
 import machine
-import utime
-import utime
+import ujson
 from utils import get_hw_uid
+
+APP_CONFIG_FILE = "app_config.json"
 
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
@@ -47,8 +48,35 @@ class Prov:
             report = f"{self.hw_uid}, {self.mv0()}, {self.mv1()}, {self.mv2()}"
             print(report)
             self.num_recorded += 1
-
+    
+    def set_name(self):
+        got_a_or_b = False
+        while not got_a_or_b:
+            a_or_b = input("Tank Module pico a or b? Type 'a' or 'b'")
+            self.pico_a_b = a_or_b
+            if a_or_b not in {'a', 'b'}:
+                print("please enter a or b!")
+            else:
+                got_a_or_b = True
+        
+        got_tank_name = False
+        while not got_tank_name:
+            name = input(f"Tank Name ('buffer', 'tank1', tank2', 'tank3')")
+            self.name = name
+            if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
+                print("bad tank name")
+            else:
+                got_tank_name = True
+        self.actor_node_name = name
+        config = {
+            "ActorNodeName": self.actor_node_name,
+            "PicoAB": self.pico_a_b,
+        }
+        with open(APP_CONFIG_FILE, "w") as f:
+            ujson.dump(config, f)
+            
     def start(self):
+        self.set_name()
         while self.num_recorded < self.samples:
             self.print_sample()
 
