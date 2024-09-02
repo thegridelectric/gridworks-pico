@@ -7,8 +7,11 @@ APP_CONFIG_FILE = "app_config.json"
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
 ADC2_PIN_NUMBER = 28
-TOTAL_REPORTS = 5
+TOTAL_REPORTS = 200
 SAMPLES = 1000
+
+PIN_0_OFFSET = 2.4
+PIN_1_OFFSET = -2.4
 
 class Prov:
     def __init__(self):
@@ -45,7 +48,7 @@ class Prov:
         return int(10**4 * sum(voltages) / self.samples) / 10
         
     def print_sample(self):
-            report = f"{self.hw_uid}, {self.mv0()}, {self.mv1()}, {self.mv2()}"
+            report = f"{self.hw_uid}, {self.mv0() - PIN_0_OFFSET}, {self.mv1() - PIN_1_OFFSET}, {self.mv2()}"
             print(report)
             self.num_recorded += 1
     
@@ -77,7 +80,8 @@ class Prov:
             
     def start(self):
         self.set_name()
-        while self.num_recorded < self.samples:
+        print("HW UID, Pin 0 mV, Pin 1 mV, Pin 2 mV (OFFSETS DONE ON PIN 0 and 1)")
+        while self.num_recorded < TOTAL_REPORTS:
             self.print_sample()
 
 if __name__ == "__main__":
