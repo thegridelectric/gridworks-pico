@@ -26,7 +26,7 @@ class Prov:
             # Read the raw ADC value (0-65535)
             readings.append(self.adc0.read_u16())
         voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**3 * sum(voltages) / self.samples)
+        return int(10**4 * sum(voltages) / self.samples) / 10
     
     def mv1(self):
         readings = []
@@ -34,7 +34,7 @@ class Prov:
             # Read the raw ADC value (0-65535)
             readings.append(self.adc1.read_u16())
         voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**3 * sum(voltages) / self.samples)
+        return int(10**4 * sum(voltages) / self.samples) / 10
 
     def mv2(self):
         readings = []
@@ -42,7 +42,7 @@ class Prov:
             # Read the raw ADC value (0-65535)
             readings.append(self.adc2.read_u16())
         voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**3 * sum(voltages) / self.samples)
+        return int(10**4 * sum(voltages) / self.samples) / 10
         
     def print_sample(self):
             report = f"{self.hw_uid}, {self.mv0()}, {self.mv1()}, {self.mv2()}"
@@ -61,7 +61,7 @@ class Prov:
         
         got_tank_name = False
         while not got_tank_name:
-            name = input(f"Tank Name ('buffer', 'tank1', tank2', 'tank3')")
+            name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3'")
             self.name = name
             if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
                 print("bad tank name")
