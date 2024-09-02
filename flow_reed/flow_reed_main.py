@@ -29,7 +29,7 @@ DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
 PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 
-POST_LIST_LENGTH = 10
+POST_LIST_LENGTH = 100
 CODE_UPDATE_PERIOD_S = 60
 KEEPALIVE_TIMER_PERIOD_S = 3
 
@@ -244,7 +244,6 @@ class PicoFlowReed:
             utime.sleep_ms(self.deadband_milliseconds)
             prev_reading = reading
             reading = self.pulse_pin.value()
-            print(f"reading is {reading}")
             if prev_reading == 0 and reading == 0:
                 in_down_state = True
         self.pin_state = PinState.DOWN
@@ -338,6 +337,7 @@ class PicoFlowReed:
         self.start_keepalive_timer()
         self.start_code_update_timer()
         self.state_init()
+        print("Initialized")
         self.main_loop()
 
 
