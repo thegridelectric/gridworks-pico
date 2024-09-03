@@ -193,7 +193,7 @@ class PicoFlowHall:
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist", 
-            "Version": "001"
+            "Version": "002"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
