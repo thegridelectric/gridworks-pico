@@ -20,7 +20,7 @@ DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_DEADBAND_MILLISECONDS = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
-DEFAULT_NO_FLOW_MILLISECONDS = 30_000
+DEFAULT_NO_FLOW_MILLISECONDS = 3_000
 
 DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
@@ -187,7 +187,7 @@ class PicoFlowReed:
         gpm = self.gallons_per_tick * 60 * hz
         # If enough milliseconds have gone by, we assume the flow has stopped and reset flow to 0
         if delta_ms > self.no_flow_milliseconds:
-            self.exp_gpm= 0
+            self.exp_gpm = 0
         elif self.exp_gpm == 0:
             self.exp_gpm = gpm
         else:
@@ -253,13 +253,16 @@ class PicoFlowReed:
         time_since_0 = utime.ticks_ms()
         time_since_1 = utime.ticks_ms()
         self.first_tick_ms = None
+        self.published_0_gpm = False
 
         while(True):  
+
             # Publish the list of relative ticks as a function of number of ticks
             if len(self.relative_ms_list) >= POST_LIST_LENGTH and not (self.posting_ticklist):
                 self.posting_ticklist = True
                 self.post_ticklist_reed()
                 self.posting_ticklist = False
+
             # States: down -> going up -> up -> going down -> down
             current_reading = self.pulse_pin.value()
             current_time_ms = utime.ticks_ms()
@@ -268,6 +271,7 @@ class PicoFlowReed:
             if self.pin_state == PinState.DOWN and current_reading == 1:
                 self.pin_state = PinState.GOING_UP
                 time_since_1 = current_time_ms
+                self.published_0_gpm = False
                 # This is the state change we track for tick deltas
                 if self.first_tick_ms is None:
                     self.first_tick_ms = current_time_ms
@@ -302,6 +306,13 @@ class PicoFlowReed:
                 if (current_time_ms - time_since_0) > self.deadband_milliseconds: # if there has been more than 10ms of 0s
                     self.pin_state = PinState.DOWN
 
+            # Reporting 0 gpm
+            if self.first_tick_ms is not None:
+                time_since_last_tick = current_time_ms - self.first_tick_ms - self.relative_ms_list[-1]
+                if time_since_last_tick > self.no_flow_milliseconds and not self.published_0_gpm:
+                    self.update_gpm(1e9)
+                    self.published_0_gpm = True
+                
     def update_code(self, timer):
         url = self.base_url + "/code-update"
         payload = {
