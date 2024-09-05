@@ -47,7 +47,6 @@ class TankModule:
         self.mv1 = None
         self.node_names = []
         self.sync_report_timer = machine.Timer(-1)
-        self.update_code_timer = machine.Timer(-1)
 
     def set_names(self):
         if self.actor_node_name is None:
@@ -176,7 +175,7 @@ class TankModule:
     # Code updates
     # ---------------------------------
 
-    def update_code(self, timer):
+    def update_code(self):
         url = self.base_url + "/code-update"
         payload = {
             "HwUid": self.hw_uid,
@@ -196,14 +195,6 @@ class TankModule:
                 with open('main_update.py', 'wb') as file:
                     file.write(python_code)
                 machine.reset()
-
-    def start_code_update_timer(self):
-        '''Start the periodic check for code updates'''
-        self.update_code_timer.init(
-            period=CODE_UPDATE_PERIOD_S * 1000,
-            mode=machine.Timer.PERIODIC,
-            callback=self.update_code
-        )
 
     # ---------------------------------
     # Measuring uV
@@ -304,11 +295,11 @@ class TankModule:
 
     def start(self):
         self.connect_to_wifi()
+        self.update_code()
         self.update_app_config()
         self.set_names()
         utime.sleep_ms(self.capture_offset_milliseconds)
         self.start_sync_report_timer()
-        self.start_code_update_timer()
         self.main_loop()
 
 if __name__ == "__main__":

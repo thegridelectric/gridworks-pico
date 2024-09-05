@@ -24,7 +24,7 @@ DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
-DEFAULT_SYNC_REPORT_HZ = False
+DEFAULT_SYNC_REPORT_HZ = True
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
@@ -56,9 +56,7 @@ class PicoFlowHall:
         self.first_tick_us = None
         self.relative_us_list = []
         self.actively_publishing = False
-        # Start timers
         self.keepalive_timer = machine.Timer(-1)
-        self.update_code_timer = machine.Timer(-1)
 
     # ---------------------------------
     # Communication
@@ -173,7 +171,7 @@ class PicoFlowHall:
     # Code updates
     # ---------------------------------
 
-    def update_code(self, timer):
+    def update_code(self):
         url = self.base_url + "/code-update"
         payload = {
             "HwUid": self.hw_uid,
@@ -193,14 +191,6 @@ class PicoFlowHall:
                 with open('main_update.py', 'wb') as file:
                     file.write(python_code)
                 machine.reset()
-    
-    def start_code_update_timer(self):
-        '''Start the periodic check for code updates'''
-        self.update_code_timer.init(
-            period=CODE_UPDATE_PERIOD_S * 1000,
-            mode=machine.Timer.PERIODIC,
-            callback=self.update_code
-        )
 
     # ---------------------------------
     # Posting Hz
@@ -313,11 +303,11 @@ class PicoFlowHall:
 
     def start(self):
         self.connect_to_wifi()
+        self.update_code()
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         # report 0 hz every self.inactivity_timeout_s (default 60)
         self.start_keepalive_timer()
-        self.start_code_update_timer()
         self.main_loop()
 
 if __name__ == "__main__":

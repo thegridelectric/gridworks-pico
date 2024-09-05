@@ -64,9 +64,7 @@ class PicoFlowReed:
         self.relative_ms_list = []
         # Will be initialized as PinState.DOWN
         self.pin_state = None 
-        # Start timers
         self.keepalive_timer = machine.Timer(-1)
-        self.update_code_timer = machine.Timer(-1)
 
     def state_init(self):
         in_down_state = False
@@ -199,7 +197,7 @@ class PicoFlowReed:
     # Code updates
     # ---------------------------------
 
-    def update_code(self, timer):
+    def update_code(self):
         url = self.base_url + "/code-update"
         payload = {
             "HwUid": self.hw_uid,
@@ -219,14 +217,6 @@ class PicoFlowReed:
                 with open('main_update.py', 'wb') as file:
                     file.write(python_code)
                 machine.reset()
-    
-    def start_code_update_timer(self):
-        '''Start the periodic check for code updates'''
-        self.update_code_timer.init(
-            period=CODE_UPDATE_PERIOD_S * 1000,
-            mode=machine.Timer.PERIODIC,
-            callback=self.update_code
-        )
     
     # ---------------------------------
     # Posting GPM
@@ -381,9 +371,9 @@ class PicoFlowReed:
                 
     def start(self):
         self.connect_to_wifi()
+        self.update_code()
         self.update_app_config()
         self.start_keepalive_timer()
-        self.start_code_update_timer()
         self.state_init()
         print("Initialized")
         self.main_loop()
