@@ -8,45 +8,69 @@ import gc
 import os
 from utils import get_hw_uid
 
-# *********************************************
-# CONFIG FILE AND DEFAULT PARAMS
-# *********************************************
+# ---------------------------------
+# Constants
+# ---------------------------------
+
+# Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
-# *********************************************
-# CONSTANTS
-# *********************************************
-ADC0_PIN_NUMBER = 26
-ADC1_PIN_NUMBER = 27
-CODE_UPDATE_PERIOD_S = 60
+# Default parameters
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
-# *********************************************
-# CONNECT TO WIFI
-# *********************************************
+# Other constants
+ADC0_PIN_NUMBER = 26
+ADC1_PIN_NUMBER = 27
+CODE_UPDATE_PERIOD_S = 60
+
+# ---------------------------------
+# Main class
+# ---------------------------------
 
 class TankModule:
+
     def __init__(self):
-        self.update_code_timer = machine.Timer(-1)
+        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.hw_uid = get_hw_uid()
         self.load_comms_config()
         self.load_app_config()
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.prev_mv0 = -1
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
         self.node_names = []
         self.sync_report_timer = machine.Timer(-1)
+        self.update_code_timer = machine.Timer(-1)
+
+    def set_names(self):
+        if self.actor_node_name is None:
+            raise Exception("Needs actor node name or pico number to run. Reboot!")
         
+        if self.pico_a_b == "a":
+            self.node_names = [
+                f"{self.actor_node_name}-depth1", 
+                f"{self.actor_node_name}-depth2"
+            ]
+        elif self.pico_a_b == "b":
+            self.node_names = [
+                f"{self.actor_node_name}-depth3", 
+                f"{self.actor_node_name}-depth4"
+            ]
+        else:
+            raise Exception("PicoAB must be a or b")
+
+    # ---------------------------------
+    # Communication
+    # ---------------------------------
                                                                  
     def load_comms_config(self):
+        '''Load the communication configuration file (WiFi and API base URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
@@ -71,8 +95,16 @@ class TankModule:
             while not wlan.isconnected():
                 utime.sleep_ms(500)
         print(f"Connected to wifi {self.wifi_name}")
+
+    # ---------------------------------
+    # Parameters
+    # ---------------------------------
     
     def load_app_config(self):
+        '''
+        Set parameters to their value in the app_config file if it is specified
+        Otherwise set them to their default value
+        '''
         try:
             with open(APP_CONFIG_FILE, "r") as f:
                 app_config = ujson.load(f)
@@ -118,7 +150,6 @@ class TankModule:
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
             if response.status_code == 200:
-                # Update configuration with the server response
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.pico_a_b = updated_config.get("PicoAB", self.pico_a_b)
@@ -136,42 +167,42 @@ class TankModule:
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
-    def set_names(self):
-        if self.actor_node_name is None:
-            raise Exception("Needs actor node name or pico number to run. Reboot!")
-        
-        if self.pico_a_b == "a":
-            self.node_names = [
-                f"{self.actor_node_name}-depth1", 
-                f"{self.actor_node_name}-depth2"
-            ]
-        elif self.pico_a_b == "b":
-            self.node_names = [
-                f"{self.actor_node_name}-depth3", 
-                f"{self.actor_node_name}-depth4"
-            ]
-        else:
-            raise Exception("PicoAB must be a or b")
+    # ---------------------------------
+    # Code updates
+    # ---------------------------------
 
-    def async_post_microvolts(self, idx: int):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
-        if idx == 0:
-            val_list = [self.mv0]
-        else:
-            val_list = [self.mv1]
+    def update_code(self, timer):
+        url = self.base_url + "/code-update"
         payload = {
-            "AboutNodeNameList": [self.node_names[idx]],
-            "MicroVoltsList": val_list, 
-            "TypeName": "microvolts", 
-            "Version": "001"
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "000"
         }
-        headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting hz: {e}")
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+
+    def start_code_update_timer(self):
+        '''Start the periodic check for code updates'''
+        self.update_code_timer.init(
+            period=CODE_UPDATE_PERIOD_S * 1000,
+            mode=machine.Timer.PERIODIC,
+            callback=self.update_code
+        )
+
+    # ---------------------------------
+    # Measuring uV
+    # ---------------------------------
 
     def adc0_micros(self):
         sample_averages = []
@@ -197,8 +228,11 @@ class TankModule:
             sample_averages.append(mean_1000)
         return sum(sample_averages)/self.num_sample_averages
     
+    # ---------------------------------
+    # Synchronous uV posts 
+    # ---------------------------------
+    
     def sync_post_microvolts(self, timer):
-        print("In timer")
         url = self.base_url + f"/{self.actor_node_name}/microvolts"
         payload = {
             "AboutNodeNameList": self.node_names,
@@ -214,42 +248,37 @@ class TankModule:
         except Exception as e:
             print(f"Error posting hz: {e}")
     
-    def update_code(self, timer):
-        url = self.base_url + "/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "000"
-        }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
-    
     def start_sync_report_timer(self):
-         # start the synchronous reporting
+        '''Start the synchronous reporting'''
         self.sync_report_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.sync_post_microvolts
         )
 
-    def start_code_update_timer(self):
-        # start the periodic check for code updates
-        self.update_code_timer.init(
-            period=CODE_UPDATE_PERIOD_S * 1000,
-            mode=machine.Timer.PERIODIC,
-            callback=self.update_code
-        )
+    # ---------------------------------
+    # Asynchronous uV posts
+    # ---------------------------------
+
+    def async_post_microvolts(self, idx: int):
+        url = self.base_url + f"/{self.actor_node_name}/microvolts"
+        if idx == 0:
+            val_list = [self.mv0]
+        else:
+            val_list = [self.mv1]
+        payload = {
+            "AboutNodeNameList": [self.node_names[idx]],
+            "MicroVoltsList": val_list, 
+            "TypeName": "microvolts", 
+            "Version": "001"
+        }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting hz: {e}")
     
     def main_loop(self):
         self.mv0 = self.adc0_micros()
@@ -269,12 +298,10 @@ class TankModule:
         self.connect_to_wifi()
         self.update_app_config()
         self.set_names()
-        print(f"sleeping for {self.capture_offset_milliseconds}")
         utime.sleep_ms(self.capture_offset_milliseconds)
         self.start_sync_report_timer()
         self.start_code_update_timer()
         self.main_loop()
-
 
 if __name__ == "__main__":
     t = TankModule()
