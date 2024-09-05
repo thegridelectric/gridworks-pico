@@ -5,6 +5,7 @@ import ujson
 import urequests
 import time
 import gc
+import os
 from utils import get_hw_uid
 
 # ---------------------------------
@@ -184,6 +185,10 @@ class PicoFlowReed:
             response.close()
         except Exception as e:
             print(f"Error posting flow.reed.params: {e}")
+            # Try reverting to previous code (will only try once)
+            if 'main_previous.py' in os.listdir():
+                os.rename('main_previous.py', 'main_revert.py')
+                machine.reset()
 
     # ---------------------------------
     # Code updates
