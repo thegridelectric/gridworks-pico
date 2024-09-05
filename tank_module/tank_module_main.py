@@ -22,6 +22,7 @@ DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
+DEFAULT_SYNC_REPORT_MICROVOLTS = True
 
 # Other constants
 ADC0_PIN_NUMBER = 26
@@ -117,6 +118,7 @@ class TankModule:
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
         self.capture_offset_milliseconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
+        self.sync_report_micro_volts = app_config.get("SyncReportMicroVolts", DEFAULT_SYNC_REPORT_MICROVOLTS)
 
     def save_app_config(self):
         config = {
@@ -126,6 +128,7 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            "SyncReportMicroVolts": self.sync_report_micro_volts,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -141,6 +144,7 @@ class TankModule:
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "CaptureOffsetMilliseconds": self.capture_offset_milliseconds,
+            "SyncReportMicroVolts": self.sync_report_micro_volts,
             "TypeName": "tank.module.params",
             "Version": "000"
         }
@@ -158,6 +162,7 @@ class TankModule:
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
                 self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
+                self.sync_report_gpm = updated_config.get("SyncReportMicroVolts", self.sync_report_micro_volts)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -233,20 +238,23 @@ class TankModule:
     # ---------------------------------
     
     def sync_post_microvolts(self, timer):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
-        payload = {
-            "AboutNodeNameList": self.node_names,
-            "MicroVoltsList": [self.mv0, self.mv1], 
-            "TypeName": "microvolts", 
-            "Version": "001"
-        }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting hz: {e}")
+        if self.sync_report_micro_volts:
+            url = self.base_url + f"/{self.actor_node_name}/microvolts"
+            payload = {
+                "AboutNodeNameList": self.node_names,
+                "MicroVoltsList": [self.mv0, self.mv1], 
+                "TypeName": "microvolts", 
+                "Version": "001"
+            }
+            headers = {'Content-Type': 'application/json'}
+            json_payload = ujson.dumps(payload)
+            try:
+                response = urequests.post(url, data=json_payload, headers=headers)
+                response.close()
+            except Exception as e:
+                print(f"Error posting hz: {e}")
+        else:
+            return
     
     def start_sync_report_timer(self):
         '''Start the synchronous reporting'''
