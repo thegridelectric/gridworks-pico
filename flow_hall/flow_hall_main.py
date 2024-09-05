@@ -54,6 +54,7 @@ class PicoFlowHall:
         self.first_tick_us = None
         self.relative_us_list = []
         self.actively_publishing = False
+        # Start timers
         self.keepalive_timer = machine.Timer(-1)
         self.update_code_timer = machine.Timer(-1)
 
@@ -156,7 +157,7 @@ class PicoFlowHall:
                 self.save_app_config()
             response.close()
         except Exception as e:
-            print(f"Error sending or receiving parameters: {e}")
+            print(f"Error posting flow.hall.params: {e}")
 
     # ---------------------------------
     # Code updates
@@ -268,7 +269,7 @@ class PicoFlowHall:
         self.first_tick_us = None
 
     # ---------------------------------
-    # Pulse callback and main loop
+    # Receive and publish ticks
     # ---------------------------------
 
     def pulse_callback(self, pin):
