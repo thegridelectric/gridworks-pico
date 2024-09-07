@@ -24,7 +24,7 @@ DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
-DEFAULT_SYNC_REPORT_HZ = True
+DEFAULT_REPORT_HZ = True
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
@@ -111,7 +111,7 @@ class PicoFlowHall:
         self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
-        self.sync_report_hz = app_config.get("SyncReportHz", DEFAULT_SYNC_REPORT_HZ)
+        self.report_hz = app_config.get("ReportHz", DEFAULT_REPORT_HZ)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -123,7 +123,7 @@ class PicoFlowHall:
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
-            "SyncReportHz": self.sync_report_hz,
+            "ReportHz": self.report_hz,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -140,9 +140,9 @@ class PicoFlowHall:
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
-            "SyncReportHz": self.sync_report_hz,
+            "ReportHz": self.report_hz,
             "TypeName": "flow.hall.params",
-            "Version": "000"
+            "Version": "001"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -157,7 +157,7 @@ class PicoFlowHall:
                 self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
-                self.sync_report_hz = updated_config.get("SyncReportHz", self.sync_report_hz)
+                self.report_hz = updated_config.get("ReportHz", self.report_hz)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -197,7 +197,7 @@ class PicoFlowHall:
     # ---------------------------------
 
     def post_hz(self):
-        if self.sync_report_hz:
+        if self.report_hz:
             url = self.base_url + f"/{self.actor_node_name}/hz"
             payload = {
                 "AboutNodeName": self.flow_node_name,
