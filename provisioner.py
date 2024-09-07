@@ -132,10 +132,8 @@ if __name__ == "__main__":
             got_type = True
 
     if type == '0':
-        print('Pico is a tank module')
         p = Prov()
         p.start()
     elif type == '1':
-        print('Pico is a flowmeter')
         p = Prov_flow()
         p.start()
