@@ -84,6 +84,58 @@ class Prov:
         while self.num_recorded < TOTAL_REPORTS:
             self.print_sample()
 
+
+class Prov_flow:
+    def __init__(self):
+        self.hw_uid = get_hw_uid()
+    
+    def set_name(self):
+
+        # Get ActorNodeName
+        got_actor_name = False
+        while not got_actor_name:
+            self.actor_name = input("Enter Actor name (e.g. 'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
+            if 'flow' not in self.actor_name:
+                print("please include 'flow' in the actor name")
+            else:
+                got_actor_name = True
+        
+        # Get FlowNodeName
+        got_flow_name = False
+        while not got_flow_name:
+            self.flow_name = input(f"Enter Flow name ('primary-flow', 'dist-flow', 'store-flow'): ")
+            if self.flow_name not in {'primary-flow', 'dist-flow', 'store-flow'}:
+                print("invalid flow name")
+            else:
+                got_flow_name = True
+
+        # Save in app_config.json
+        config = {
+            "ActorNodeName": self.actor_name,
+            "FlowNodeName": self.flow_name,
+        }
+        with open(APP_CONFIG_FILE, "w") as f:
+            ujson.dump(config, f)
+            
+    def start(self):
+        self.set_name()
+        print("Done. You can now close this file.")
+
 if __name__ == "__main__":
-    p = Prov()
-    p.start()
+
+    got_type = False
+    while not got_type:
+        type = input("Is this Pico associated to a tank (type 0) or af low (type 1): ")
+        if type not in {0,1}:
+            print('Please enter 0 or 1')
+        else:
+            got_type = True
+
+    if type == 0:
+        print('Pico is a tank module')
+        p = Prov()
+        p.start()
+    elif type == 1:
+        print('Pico is a flowmeter')
+        p = Prov_flow()
+        p.start()
