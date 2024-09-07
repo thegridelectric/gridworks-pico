@@ -17,6 +17,8 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
+DEFAULT_ACTOR_NAME = "tank"
+DEFAULT_PICO_AB = "a"
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
@@ -110,8 +112,8 @@ class TankModule:
                 app_config = ujson.load(f)
         except:
             app_config = {}
-        self.actor_node_name = app_config.get("ActorNodeName")
-        self.pico_a_b = app_config.get("PicoAB")
+        self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
+        self.pico_a_b = app_config.get("PicoAB", DEFAULT_PICO_AB)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
