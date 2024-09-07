@@ -55,7 +55,7 @@ class Prov:
     def set_name(self):
         got_a_or_b = False
         while not got_a_or_b:
-            a_or_b = input("Tank Module pico a or b? Type 'a' or 'b'")
+            a_or_b = input("Tank Module pico a or b? Type 'a' or 'b': ")
             self.pico_a_b = a_or_b
             if a_or_b not in {'a', 'b'}:
                 print("please enter a or b!")
@@ -64,7 +64,7 @@ class Prov:
         
         got_tank_name = False
         while not got_tank_name:
-            name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3'")
+            name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
             self.name = name
             if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
                 print("bad tank name")
