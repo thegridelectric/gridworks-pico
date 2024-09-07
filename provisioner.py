@@ -126,7 +126,7 @@ if __name__ == "__main__":
     got_type = False
     while not got_type:
         type = input("Is this Pico associated to a tank (enter '0') or a flow (enter '1'): ")
-        if type not in {0,1}:
+        if type not in {'0','1'}:
             print('Please enter 0 or 1')
         else:
             got_type = True
