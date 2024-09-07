@@ -17,11 +17,17 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 
 ## Adding `app_config.json`
 
-- **Option 1**: Run the provided `provisioner.py` script on the Pico and answer prompts.
+### Option 1
 
-- **Option 2**: Add the provided `app_config.json` to the Pico
+- Run the provided `..._provisioner.py` script on the Pico and answer prompts directly in Thonny's shell
+  - Flow meters: `flow_provisioner.py`
+  - Tank modules: `tank_provisioner.py`
 
-- Update the `ActorNodeName`. The name choice does not matter, but all Picos in the same house must have a different ActorNodeName (as long as we are using remote code download). Some examples from fir: 
+### Option 2
+
+- Add the provided `app_config.json` to the Pico
+
+- Update the `ActorNodeName`:
   - Reed flowmeter, primary: `pico-flow-reed`
   - Hall flowmeter, distribution: `pico-flow-hall`
   - Hall flowmeter, storage: `pico-flow-hall-store`
@@ -34,17 +40,16 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 - Update `PicoAB` if the Pico is measuring temperatures in a tank:
   - Top two layers: `a`
   - Bottom two layers: `b`
-- *Note: It does not matter what `FlowNodeName` is set to for tank modules, and what `PicoAB` is set to for flowmeters.*
 
 ### Examples:
 
 Hall meter, store flow:
 ```
-{"ActorNodeName": "pico-flow-hall-store", "FlowNodeName": "store-flow", "PicoAB": "no-ab"}
+{"ActorNodeName": "pico-flow-hall-store", "FlowNodeName": "store-flow"}
 ```
 Tank module, upper two layers:
 ```
-{"ActorNodeName": "tank1-a", "FlowNodeName": "no-name", "PicoAB": "a"}
+{"ActorNodeName": "tank1", "PicoAB": "a"}
 ```
 
 ## Adding a `main.py`
