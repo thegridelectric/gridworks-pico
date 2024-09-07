@@ -212,7 +212,7 @@ class TankModule:
             voltages = list(map(lambda x: x * 3.3 / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
-        return sum(sample_averages)/self.num_sample_averages
+        return int(sum(sample_averages)/self.num_sample_averages)
     
     def adc1_micros(self):
         sample_averages = []
@@ -224,7 +224,7 @@ class TankModule:
             voltages = list(map(lambda x: x * 3.3 / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
-        return sum(sample_averages)/self.num_sample_averages
+        return int(sum(sample_averages)/self.num_sample_averages)
     
     # ---------------------------------
     # Synchronous uV posts 
@@ -245,7 +245,7 @@ class TankModule:
                 response = urequests.post(url, data=json_payload, headers=headers)
                 response.close()
             except Exception as e:
-                print(f"Error posting hz: {e}")
+                print(f"Error posting microvolts: {e}")
         else:
             return
     
@@ -279,7 +279,7 @@ class TankModule:
             response = urequests.post(url, data=json_payload, headers=headers)
             response.close()
         except Exception as e:
-            print(f"Error posting hz: {e}")
+            print(f"Error posting microvolts: {e}")
     
     def main_loop(self):
         self.mv0 = self.adc0_micros()
