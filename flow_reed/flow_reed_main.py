@@ -25,7 +25,7 @@ DEFAULT_NO_FLOW_MILLISECONDS = 3_000
 DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
-DEFAULT_SYNC_REPORT_GPM = True
+DEFAULT_REPORT_GPM = True
 
 # Other constants
 PULSE_PIN = 0 # This is pin 1
@@ -133,7 +133,7 @@ class PicoFlowReed:
         self.alpha = alpha_times_100 / 100
         async_delta_gpm_times_100 = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100)
         self.async_delta_gpm = async_delta_gpm_times_100 / 100
-        self.sync_report_gpm = app_config.get("SyncReportGpm", DEFAULT_SYNC_REPORT_GPM)
+        self.report_gpm = app_config.get("ReportGpm", DEFAULT_REPORT_GPM)
 
     def save_app_config(self):
         config = {
@@ -145,7 +145,7 @@ class PicoFlowReed:
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
-            "SyncReportGpm": self.sync_report_gpm,
+            "ReportGpm": self.report_gpm,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -162,9 +162,9 @@ class PicoFlowReed:
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
-            "SyncReportGpm": self.sync_report_gpm,
+            "ReportGpm": self.report_gpm,
             "TypeName": "flow.reed.params",
-            "Version": "002"
+            "Version": "003"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -183,7 +183,7 @@ class PicoFlowReed:
                 self.alpha = alpha_times_100 / 100
                 async_delta_gpm_times_100 = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100))
                 self.async_delta_gpm = async_delta_gpm_times_100 / 100
-                self.sync_report_gpm = updated_config.get("SyncReportGpm", self.sync_report_gpm)
+                self.report_gpm = updated_config.get("ReportGpm", self.report_gpm)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -223,7 +223,7 @@ class PicoFlowReed:
     # ---------------------------------
 
     def post_gpm(self):
-        if self.sync_report_gpm:
+        if self.report_gpm:
             url = self.base_url +  f"/{self.actor_node_name}/gpm"
             payload = {
                 "AboutNodeName": self.flow_node_name,
