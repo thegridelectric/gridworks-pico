@@ -32,7 +32,7 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
   - Hall flowmeter, distribution: `pico-flow-hall`
   - Hall flowmeter, storage: `pico-flow-hall-store`
   - Any part of the buffer: `buffer`
-  - Any part of a tank: `tankx` (where $x\in\{1,2,3\}$)
+  - Any part of tank x (where x can be 1, 2, or 3): `tankx` 
 - Update `FlowNodeName` if the Pico is measuring flow:
   - Primary: `primary-flow`
   - Distribution: `dist-flow`
