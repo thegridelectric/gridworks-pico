@@ -49,7 +49,7 @@ Tank module, upper two layers:
 
 ## Adding a `main.py`
 
-Depending on the sensor connected to the Pico, save the content of `..._main.py` as `main.py` to the Pico:
+Depending on the sensor connected to the Pico, save the content of `..._main.py` as `main.py` on the Pico:
 - Reed flowmeter: `flow_reed_main.py`
 - Hall flowmeter: `flow_hall_main.py`
 - Tank temperatures: `tank_module_main.py`
@@ -61,5 +61,5 @@ Depending on the sensor connected to the Pico, save the content of `..._main.py`
   - Unplug the Pico from the computer and plug the Pico to a new power source
   - Or run `main.py` directly in Thonny
 - The Pico should show up in the `api` tmux session
-- It will immediately communicate its parameters, of which ```HwUid: pico_xxxxxx```, where `xxxxxx` is its unique ID. 
-- Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878).
+- It will immediately communicate its parameters, of which ```HwUid: pico_xxxxxx```, where `xxxxxx` is its unique ID
+- Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878)
