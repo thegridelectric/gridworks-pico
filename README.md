@@ -17,16 +17,16 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 
 ## Adding `app_config.json`
 
-- Add the provided `app_config.json` to the Pico
+- **Option 1**: Run the provided `provisioner.py` script on the Pico and answer prompts.
+
+- **Option 2**: Add the provided `app_config.json` to the Pico
 
 - Update the `ActorNodeName`. The name choice does not matter, but all Picos in the same house must have a different ActorNodeName (as long as we are using remote code download). Some examples from fir: 
   - Reed flowmeter, primary: `pico-flow-reed`
   - Hall flowmeter, distribution: `pico-flow-hall`
   - Hall flowmeter, storage: `pico-flow-hall-store`
-  - Top two layers of buffer: `buffer-a`
-  - Bottom two layers of buffer: `buffer-b`
-  - Top two layers of tank1: `tank1-a`
-  - Bottom two layers of tank1: `tank1-b`
+  - Any part of the buffer: `buffer`
+  - Any part of a tank: `tankx` (where $x\in\{1,2,3\}$)
 - Update `FlowNodeName` if the Pico is measuring flow:
   - Primary: `primary-flow`
   - Distribution: `dist-flow`
