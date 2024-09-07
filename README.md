@@ -19,9 +19,7 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 
 ### Option 1
 
-- Run the provided `..._provisioner.py` script on the Pico and answer prompts directly in Thonny's shell
-  - Flow meters: `flow_provisioner.py`
-  - Tank modules: `tank_provisioner.py`
+- Run the provided `provisioner.py` script on the Pico and answer prompts directly in Thonny's shell
 
 ### Option 2
 
