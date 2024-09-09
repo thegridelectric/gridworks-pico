@@ -165,7 +165,7 @@ class PicoFlowReed:
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
             "ReportGpm": self.report_gpm,
             "TypeName": "flow.reed.params",
-            "Version": "002"
+            "Version": "003"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
