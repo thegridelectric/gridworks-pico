@@ -3,10 +3,10 @@ import utime
 import network
 import ujson
 import urequests
+import ubinascii
 import time
 import gc
 import os
-from utils import get_hw_uid
 
 # ---------------------------------
 # Constants
@@ -49,7 +49,8 @@ class PicoFlowReed:
 
     def __init__(self):
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.hw_uid = get_hw_uid()
+        pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
+        self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         self.load_comms_config()
         self.load_app_config()
         # For tracking async reports of exponential weighted GPM

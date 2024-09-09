@@ -3,10 +3,10 @@ import utime
 import network
 import ujson
 import urequests
+import ubinascii
 import utime
 import gc
 import os
-from utils import get_hw_uid
 
 # ---------------------------------
 # Constants
@@ -40,7 +40,8 @@ class TankModule:
     def __init__(self):
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
-        self.hw_uid = get_hw_uid()
+        pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
+        self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         self.load_comms_config()
         self.load_app_config()
         self.prev_mv0 = -1

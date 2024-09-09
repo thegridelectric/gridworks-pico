@@ -7,7 +7,6 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 - Plug in the Pico to a computer and open Thonny
 - Close all open files and hit the red 'Stop' button
 - Add the provided `boot.py` to the Pico
-- Add the provided `utils.py` to the Pico
 
 ## Adding `comms_config.json`
 
