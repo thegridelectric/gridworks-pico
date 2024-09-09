@@ -168,9 +168,9 @@ class TankModule:
                 self.save_app_config()
             response.close()
         except Exception as e:
-            print(f"Error sending/receiving parameters to/from server: {e}")
+            print(f"Error sending tank module params: {e}")
             if 'main_previous.py' in os.listdir():
-                # Reverting to previous code
+            # Try reverting to previous code (will only try once)
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -281,7 +281,7 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
-        utime.sleep_ms(self.capture_offset_milliseconds)
+        #utime.sleep_ms(self.capture_offset_milliseconds)
         self.start_keepalive_timer()
         self.main_loop()
 
