@@ -249,13 +249,17 @@ class TankModule:
                 print(f"Error posting microvolts: {e}")
         else:
             return
+        
+    def keep_alive(self, timer):
+        '''Post microvolts'''
+        self.post_microvolts()
     
     def start_keepalive_timer(self):
         '''Initialize the timer to post microvolts periodically'''
         self.keepalive_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.post_microvolts
+            callback=self.keep_alive
         )
 
     def main_loop(self):
