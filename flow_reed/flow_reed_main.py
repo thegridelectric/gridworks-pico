@@ -26,7 +26,6 @@ DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
 DEFAULT_REPORT_GPM = True
-DEFAULT_CAPTURE_OFFSET_S = 0
 
 # Other constants
 PULSE_PIN = 0 # This is pin 1
@@ -136,7 +135,6 @@ class PicoFlowReed:
         async_delta_gpm_times_100 = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100)
         self.async_delta_gpm = async_delta_gpm_times_100 / 100
         self.report_gpm = app_config.get("ReportGpm", DEFAULT_REPORT_GPM)
-        self.capture_offset_seconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
 
     def save_app_config(self):
         config = {
@@ -149,7 +147,6 @@ class PicoFlowReed:
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
             "ReportGpm": self.report_gpm,
-            "CaptureOffsetS": self.capture_offset_seconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -167,7 +164,6 @@ class PicoFlowReed:
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
             "ReportGpm": self.report_gpm,
-            "CaptureOffsetS": self.capture_offset_seconds,
             "TypeName": "flow.reed.params",
             "Version": "004"
         }
@@ -189,7 +185,7 @@ class PicoFlowReed:
                 async_delta_gpm_times_100 = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100))
                 self.async_delta_gpm = async_delta_gpm_times_100 / 100
                 self.report_gpm = updated_config.get("ReportGpm", self.report_gpm)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", self.capture_offset_seconds)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:

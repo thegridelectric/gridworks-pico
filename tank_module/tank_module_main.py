@@ -23,7 +23,6 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
-DEFAULT_CAPTURE_OFFSET_S = 0
 
 # Other constants
 ADC0_PIN_NUMBER = 26
@@ -117,7 +116,6 @@ class TankModule:
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
-        self.capture_offset_seconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
 
     def save_app_config(self):
@@ -128,7 +126,6 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "CaptureOffsetS": self.capture_offset_seconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -143,7 +140,6 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "CaptureOffsetS": self.capture_offset_seconds,
             "TypeName": "tank.module.params",
             "Version": "001"
         }
@@ -160,7 +156,7 @@ class TankModule:
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", self.capture_offset_seconds)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
