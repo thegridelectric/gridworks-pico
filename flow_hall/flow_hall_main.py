@@ -25,6 +25,7 @@ DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
 DEFAULT_REPORT_HZ = True
+DEFAULT_CAPTURE_OFFSET_S = 0
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
@@ -113,6 +114,7 @@ class PicoFlowHall:
         self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
         self.report_hz = app_config.get("ReportHz", DEFAULT_REPORT_HZ)
+        self.capture_offset_seconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -125,6 +127,7 @@ class PicoFlowHall:
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
+            "CaptureOffsetS": self.capture_offset_seconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -142,8 +145,9 @@ class PicoFlowHall:
             "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
+            "CaptureOffsetS": self.capture_offset_seconds,
             "TypeName": "flow.hall.params",
-            "Version": "001"
+            "Version": "002"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -159,6 +163,7 @@ class PicoFlowHall:
                 self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
                 self.report_hz = updated_config.get("ReportHz", self.report_hz)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", self.capture_offset_seconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -308,6 +313,7 @@ class PicoFlowHall:
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         # report 0 hz every self.inactivity_timeout_s (default 60)
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
 

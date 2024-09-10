@@ -118,7 +118,7 @@ class TankModule:
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
-        self.capture_offset_milliseconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
+        self.capture_offset_seconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.report_micro_volts = app_config.get("ReportMicroVolts", DEFAULT_REPORT_MICROVOLTS)
 
@@ -145,10 +145,10 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "CaptureOffsetMilliseconds": self.capture_offset_milliseconds,
+            "CaptureOffsetS": self.capture_offset_seconds,
             "ReportMicroVolts": self.report_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "000"
+            "Version": "001"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -163,8 +163,8 @@ class TankModule:
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
                 self.report_micro_volts = updated_config.get("ReportMicroVolts", self.report_micro_volts)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", self.capture_offset_seconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -281,7 +281,7 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
-        #utime.sleep_ms(self.capture_offset_milliseconds)
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
 
