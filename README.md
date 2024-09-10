@@ -7,7 +7,6 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 - Plug in the Pico to a computer and open Thonny
 - Create a new file
 - Copy and paste the content of the provided `provisioner.py` in that new file
-- Save the file as a `.py` file on the Pico
 - Run the file and answer the prompts in Thonny's shell
 - Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878)
 

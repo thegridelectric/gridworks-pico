@@ -1322,4 +1322,4 @@ elif 'main_revert.py' in os.listdir():
 
     print(f"\n{'-'*40}\n[4/4] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
 
-    print("The Pico is set up. It is now ready to use.\nNote: you can delete this file from the Pico to save up space.")
+    print("The Pico is set up. It is now ready to use.")
