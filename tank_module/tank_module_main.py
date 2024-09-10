@@ -23,7 +23,6 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
-DEFAULT_REPORT_MICROVOLTS = True
 DEFAULT_CAPTURE_OFFSET_S = 0
 
 # Other constants
@@ -120,7 +119,6 @@ class TankModule:
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
         self.capture_offset_seconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
-        self.report_micro_volts = app_config.get("ReportMicroVolts", DEFAULT_REPORT_MICROVOLTS)
 
     def save_app_config(self):
         config = {
@@ -130,7 +128,7 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "ReportMicroVolts": self.report_micro_volts,
+            "CaptureOffsetS": self.capture_offset_seconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -146,7 +144,6 @@ class TankModule:
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "CaptureOffsetS": self.capture_offset_seconds,
-            "ReportMicroVolts": self.report_micro_volts,
             "TypeName": "tank.module.params",
             "Version": "001"
         }
@@ -163,7 +160,6 @@ class TankModule:
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.report_micro_volts = updated_config.get("ReportMicroVolts", self.report_micro_volts)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", self.capture_offset_seconds)
                 self.save_app_config()
             response.close()
@@ -231,24 +227,27 @@ class TankModule:
     # Posting microvolts
     # ---------------------------------
 
-    def post_microvolts(self):
-        if self.report_micro_volts:
-            url = self.base_url + f"/{self.actor_node_name}/microvolts"
-            payload = {
-                "AboutNodeNameList": self.node_names,
-                "MicroVoltsList": [self.mv0, self.mv1], 
-                "TypeName": "microvolts", 
-                "Version": "001"
-            }
-            headers = {'Content-Type': 'application/json'}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting microvolts: {e}")
+    def post_microvolts(self, idx=2):
+        url = self.base_url + f"/{self.actor_node_name}/microvolts"
+        if idx==0:
+            mv_list = [self.mv0]
+        elif idx==1:
+            mv_list = [self.mv1]
         else:
-            return
+            mv_list = [self.mv0, self.mv1]
+        payload = {
+            "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
+            "MicroVoltsList": mv_list, 
+            "TypeName": "microvolts", 
+            "Version": "001"
+        }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting microvolts: {e}")
         
     def keep_alive(self, timer):
         '''Post microvolts'''
@@ -269,10 +268,10 @@ class TankModule:
             self.mv0 = self.adc0_micros()
             self.mv1 = self.adc1_micros()
             if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
-                self.post_microvolts()
+                self.post_microvolts(idx=0)
                 self.prev_mv0 = self.mv0
             if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
-                self.post_microvolts()
+                self.post_microvolts(idx=1)
                 self.prev_mv1 = self.mv1
             utime.sleep_ms(100)
 
