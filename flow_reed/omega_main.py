@@ -226,30 +226,27 @@ class PicoFlowReed:
     # ---------------------------------
 
     def post_gpm(self):
-        if self.report_gpm:
-            url = self.base_url +  f"/{self.actor_node_name}/gpm"
-            payload = {
-                "AboutNodeName": self.flow_node_name,
-                "ValueTimes100": int(100 * self.exp_gpm),
-                "TypeName": "gpm", 
-                "Version": "000"
-            }
-            headers = {"Content-Type": "application/json"}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting gpm: {e}")
-            gc.collect()
-            self.prev_gpm = self.exp_gpm
-            self.gpm_posted_time = utime.time()
-        else:
-            return
+        url = self.base_url +  f"/{self.actor_node_name}/gpm"
+        payload = {
+            "AboutNodeName": self.flow_node_name,
+            "ValueTimes100": int(100 * self.exp_gpm),
+            "TypeName": "gpm", 
+            "Version": "000"
+        }
+        headers = {"Content-Type": "application/json"}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting gpm: {e}")
+        gc.collect()
+        self.prev_gpm = self.exp_gpm
+        self.gpm_posted_time = utime.time()
 
     def keep_alive(self, timer):
         '''Post gpm, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.gpm_posted_time > self.inactivity_timeout_s:
+        if utime.time() - self.gpm_posted_time > self.inactivity_timeout_s and self.report_gpm:
             self.post_gpm()
 
     def start_keepalive_timer(self):

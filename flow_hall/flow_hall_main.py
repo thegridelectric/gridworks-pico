@@ -200,29 +200,26 @@ class PicoFlowHall:
     # ---------------------------------
 
     def post_hz(self):
-        if self.report_hz:
-            url = self.base_url + f"/{self.actor_node_name}/hz"
-            payload = {
-                "AboutNodeName": self.flow_node_name,
-                "MilliHz": int(self.exp_hz * 1e3), 
-                "TypeName": "hz",
-                "Version": "001"
-                }
-            headers = {'Content-Type': 'application/json'}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting hz: {e}")
-            self.prev_hz = self.exp_hz
-            self.hz_posted_time = utime.time()
-        else:
-            return
-
+        url = self.base_url + f"/{self.actor_node_name}/hz"
+        payload = {
+            "AboutNodeName": self.flow_node_name,
+            "MilliHz": int(self.exp_hz * 1e3), 
+            "TypeName": "hz",
+            "Version": "001"
+            }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting hz: {e}")
+        self.prev_hz = self.exp_hz
+        self.hz_posted_time = utime.time()
+        
     def keep_alive(self, timer):
         '''Post Hz, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.hz_posted_time > self.inactivity_timeout_s:
+        if utime.time() - self.hz_posted_time > self.inactivity_timeout_s and self.report_hz:
             self.post_hz()
 
     def start_keepalive_timer(self):
