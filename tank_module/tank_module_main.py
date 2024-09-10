@@ -47,6 +47,7 @@ class TankModule:
         self.mv0 = None
         self.mv1 = None
         self.node_names = []
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     def set_names(self):

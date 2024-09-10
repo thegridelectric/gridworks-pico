@@ -65,6 +65,7 @@ class PicoFlowReed:
         self.relative_ms_list = []
         # Will be initialized as PinState.DOWN
         self.pin_state = None 
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     def state_init(self):

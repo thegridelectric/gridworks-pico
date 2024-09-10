@@ -57,6 +57,7 @@ class PicoFlowHall:
         self.first_tick_us = None
         self.relative_us_list = []
         self.actively_publishing = False
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     # ---------------------------------
