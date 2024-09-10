@@ -1227,8 +1227,8 @@ elif 'main_revert.py' in os.listdir():
     connected_to_api = False
     while not connected_to_api:
 
-        hostname = input("Enter hostname (e.g., 'fir2.local'): ")
-        base_url = f"http://{hostname}:8000"
+        hostname = input("Enter hostname (e.g., 'fir2' or an IP address): ")
+        base_url = f"http://{hostname}.local:8000"
         url = base_url + "/new-pico"
         payload = {
             "HwUid": hw_uid,
@@ -1244,8 +1244,26 @@ elif 'main_revert.py' in os.listdir():
             else:
                 print(f"Connected to the API, but it returned a status code {response.status_code}, indicating an issue.")
             response.close()
-        except Exception as e:
-            print("There was an error connecting to the API: {e}. Please check the hostname and try again.")
+        except Exception:
+            # If the hostname is an IP address
+            base_url = f"http://{hostname}:8000"
+            url = base_url + "/new-pico"
+            payload = {
+                "HwUid": hw_uid,
+                "TypeName": "new.pico",
+                "Version": "000"
+            }
+            headers = {"Content-Type": "application/json"}
+            json_payload = ujson.dumps(payload)
+            try:
+                response = urequests.post(url, data=json_payload, headers=headers)
+                if response.status_code == 200:
+                    connected_to_api = True
+                else:
+                    print(f"Connected to the API, but it returned a status code {response.status_code}, indicating an issue.")
+                response.close()
+            except Exception as e:
+                print(f"There was an error connecting to the API: {e}. Please check the hostname and try again.")
 
     print(f"Connected to the API hosted in '{base_url}'.")
 
