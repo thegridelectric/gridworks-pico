@@ -20,7 +20,6 @@ APP_CONFIG_FILE = "app_config.json"
 DEFAULT_ACTOR_NAME = "tank"
 DEFAULT_PICO_AB = "a"
 DEFAULT_CAPTURE_PERIOD_S = 60
-DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
@@ -118,7 +117,7 @@ class TankModule:
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
-        self.capture_offset_milliseconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
+        self.capture_offset_milliseconds = 0
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.report_micro_volts = app_config.get("ReportMicroVolts", DEFAULT_REPORT_MICROVOLTS)
 
@@ -281,7 +280,7 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
-        #utime.sleep_ms(self.capture_offset_milliseconds)
+        utime.sleep_ms(self.capture_offset_milliseconds)
         self.start_keepalive_timer()
         self.main_loop()
 
