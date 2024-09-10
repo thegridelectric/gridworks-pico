@@ -22,14 +22,13 @@ DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
-DEFAULT_INACTIVITY_TIMEOUT_S = 60
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
 DEFAULT_REPORT_HZ = True
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
 CODE_UPDATE_PERIOD_S = 60
-KEEPALIVE_TIMER_PERIOD_S = 3
 NO_FLOW_MILLISECONDS = 1000
 ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS = 200
 MAIN_LOOP_MILLISECONDS = 100
@@ -111,7 +110,7 @@ class PicoFlowHall:
         self.alpha = alpha_times_100 / 100
         self.async_capture_delta_hz = app_config.get("AsyncCaptureDeltaHz", DEFAULT_ASYNC_CAPTURE_DELTA_HZ)
         self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
-        self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
+        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
         self.report_hz = app_config.get("ReportHz", DEFAULT_REPORT_HZ)
     
@@ -123,7 +122,7 @@ class PicoFlowHall:
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
+            "CapturePeriodS": self.capture_period_s,
             "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
         }
@@ -140,7 +139,7 @@ class PicoFlowHall:
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
+            "CapturePeriodS": self.capture_period_s,
             "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
             "TypeName": "flow.hall.params",
@@ -157,7 +156,7 @@ class PicoFlowHall:
                 self.alpha = updated_config.get("AlphaTimes100", self.alpha * 100) / 100
                 self.async_capture_delta_hz = updated_config.get("AsyncCaptureDeltaHz", self.async_capture_delta_hz)
                 self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
-                self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
+                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
                 self.report_hz = updated_config.get("ReportHz", self.report_hz)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
@@ -218,14 +217,14 @@ class PicoFlowHall:
         self.hz_posted_time = utime.time()
         
     def keep_alive(self, timer):
-        '''Post Hz, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.hz_posted_time > self.inactivity_timeout_s and self.report_hz:
+        '''Periodically post Hz if none were posted within the last minute'''
+        if utime.time() - self.hz_posted_time > 55 and self.report_hz:
             self.post_hz()
 
     def start_keepalive_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
-            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
+            period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.keep_alive
         )
@@ -306,7 +305,6 @@ class PicoFlowHall:
         self.update_code()
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
-        # report 0 hz every self.inactivity_timeout_s (default 60)
         utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()

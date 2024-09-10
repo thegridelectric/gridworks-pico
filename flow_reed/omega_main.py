@@ -20,7 +20,7 @@ APP_CONFIG_FILE = "app_config.json"
 DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_DEADBAND_MILLISECONDS = 10
-DEFAULT_INACTIVITY_TIMEOUT_S = 60
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_NO_FLOW_MILLISECONDS = 3_000
 DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
@@ -32,7 +32,6 @@ PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 30000
 POST_LIST_LENGTH = 1
 CODE_UPDATE_PERIOD_S = 60
-KEEPALIVE_TIMER_PERIOD_S = 3
 
 # Available pin states
 class PinState:
@@ -127,7 +126,7 @@ class PicoFlowReed:
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
-        self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
+        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
         alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
         gallons_per_tick_times_10000 = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000)
@@ -142,7 +141,7 @@ class PicoFlowReed:
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
             "DeadbandMilliseconds": self.deadband_milliseconds,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
+            "CapturePeriodS": self.capture_period_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
@@ -159,7 +158,7 @@ class PicoFlowReed:
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
             "DeadbandMilliseconds": self.deadband_milliseconds,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
+            "CapturePeriodS": self.capture_period_s,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
@@ -177,7 +176,7 @@ class PicoFlowReed:
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
-                self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
+                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
                 gallons_per_tick_times_10000 = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000))
                 self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
@@ -245,14 +244,14 @@ class PicoFlowReed:
         self.gpm_posted_time = utime.time()
 
     def keep_alive(self, timer):
-        '''Post gpm, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.gpm_posted_time > self.inactivity_timeout_s and self.report_gpm:
+        '''Periodically post Hz if none were posted within the last minute'''
+        if utime.time() - self.gpm_posted_time > 55 and self.report_gpm:
             self.post_gpm()
 
     def start_keepalive_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
-            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
+            period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.keep_alive
         )
