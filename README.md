@@ -2,6 +2,26 @@
 
 GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico W.
 
+## Configuring a new Pico
+
+- Plug in the Pico to a computer and open Thonny
+- Create a new file
+- Copy and paste the content of the provided `provisioner.py` in that new file
+- Save the file as a `.py` file on the Pico
+- Run the file and answer the prompts in Thonny's shell
+- Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878)
+
+## Testing the code
+- Option 1: 
+  - Unplug the Pico from the computer
+  - Plug the Pico to a new power source
+- Option 2:
+  - Hit the stop button
+  - Close all open windows
+  - Open `main.py` and run it
+- In both cases, the Pico should show up in the `api` tmux session and communicate its parameters
+
+<!-- 
 ## First steps
 
 - Plug in the Pico to a computer and open Thonny
@@ -55,7 +75,7 @@ Depending on the sensor connected to the Pico, save the content of `..._main.py`
 - Reed flowmeter: `flow_reed_main.py`
 - Hall flowmeter: `flow_hall_main.py`
 - Tank temperatures: `tank_module_main.py`
-- Omega flowmeter: `omega_main.py`
+- Omega flowmeter: `omega_main.py` 
 
 ## Final steps
 - Make sure all files are saved on the Pico
@@ -64,4 +84,4 @@ Depending on the sensor connected to the Pico, save the content of `..._main.py`
   - Or run `main.py` directly in Thonny
 - The Pico should show up in the `api` tmux session
 - It will immediately communicate its parameters, of which ```HwUid: pico_xxxxxx```, where `xxxxxx` is its unique ID
-- Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878)
+- Add this Pico to the [device registry](https://docs.google.com/spreadsheets/d/1ciNYkqTFreuF7spXqfPVz5j4dWS9rPG2Zydkkh57mLI/edit?pli=1&gid=167548878#gid=167548878)-->
