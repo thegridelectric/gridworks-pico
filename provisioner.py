@@ -1232,7 +1232,7 @@ elif 'main_revert.py' in os.listdir():
         url = base_url + "/new-pico"
         payload = {
             "HwUid": hw_uid,
-            "TypeName": "tank.module.params",
+            "TypeName": "new.pico",
             "Version": "000"
         }
         headers = {"Content-Type": "application/json"}
