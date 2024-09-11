@@ -233,6 +233,7 @@ class TankModule:
         else:
             mv_list = [self.mv0, self.mv1]
         payload = {
+            "HwUid": self.hw_uid,
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
             "TypeName": "microvolts", 
