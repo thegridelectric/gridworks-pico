@@ -299,6 +299,9 @@ class PicoFlowHall:
                 # to let the time disturbances reduce
                 utime.sleep_ms(ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS)
                 self.actively_publishing = False
+            # If there have been no ticks in the last second, flow is 0
+            if (utime.time()-self.last_ticks_sent > 1) and (len(self.relative_us_list)==0):
+                self.update_hz(1e9)
 
     def start(self):
         self.connect_to_wifi()
