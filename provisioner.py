@@ -30,7 +30,8 @@ if 'main.py' in os.listdir():
 # *************************
 
 def write_flow_hall_main():
-    main_code = """import machine
+    main_code = """
+import machine
 import utime
 import network
 import ujson
@@ -53,16 +54,14 @@ DEFAULT_ACTOR_NAME = "pico-flow-hall"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
-DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
-DEFAULT_INACTIVITY_TIMEOUT_S = 60
 DEFAULT_EXP_WEIGHTING_MS = 40
+DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_REPORT_HZ = True
+DEFAULT_NO_FLOW_MILLISECONDS = 1000
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
-CODE_UPDATE_PERIOD_S = 60
-KEEPALIVE_TIMER_PERIOD_S = 3
-NO_FLOW_MILLISECONDS = 1000
 ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS = 200
 MAIN_LOOP_MILLISECONDS = 100
 
@@ -73,22 +72,25 @@ MAIN_LOOP_MILLISECONDS = 100
 class PicoFlowHall:
 
     def __init__(self):
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
+        # Pins
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
-        # For tracking async reports of exponential weighted frequency
+        # Reporting exp weighted average Hz
         self.exp_hz = 0
         self.prev_hz = None
         self.hz_posted_time = utime.time()
-        # For tracking tick list
-        self.last_ticks_sent = utime.time()
-        # There is a time lag between posting the ticks and starting off capturing ticks
-        # and this is the microseconds of the first tick in a batch
+        # Reporting relative ticklists
         self.first_tick_us = None
         self.relative_us_list = []
+        self.last_ticks_sent = utime.time()
         self.actively_publishing = False
+        # Synchronous reporting on the minute
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     # ---------------------------------
@@ -138,13 +140,13 @@ class PicoFlowHall:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
-        self.alpha = alpha_times_100 / 100
+        self.alpha = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100) / 100
         self.async_capture_delta_hz = app_config.get("AsyncCaptureDeltaHz", DEFAULT_ASYNC_CAPTURE_DELTA_HZ)
-        self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
-        self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
         self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
+        self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
+        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.report_hz = app_config.get("ReportHz", DEFAULT_REPORT_HZ)
+        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -153,29 +155,31 @@ class PicoFlowHall:
             "FlowNodeName": self.flow_node_name,
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
-            "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
+            "PublishStampsPeriodS": self.publish_stamps_period_s,
+            "CapturePeriodS": self.capture_period_s,
             "ReportHz": self.report_hz,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
         '''Post current parameters, and update parameters based on the server response'''
-        url = self.base_url + "/flow-hall-params"
+        url = self.base_url + f"/{self.actor_node_name}/flow-hall-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
-            "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
             "ExpWeightingMs": self.exp_weighting_ms,
+            "PublishStampsPeriodS": self.publish_stamps_period_s,
+            "CapturePeriodS": self.capture_period_s,
             "ReportHz": self.report_hz,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
             "TypeName": "flow.hall.params",
-            "Version": "001"
+            "Version": "002"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -187,16 +191,18 @@ class PicoFlowHall:
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
                 self.alpha = updated_config.get("AlphaTimes100", self.alpha * 100) / 100
                 self.async_capture_delta_hz = updated_config.get("AsyncCaptureDeltaHz", self.async_capture_delta_hz)
-                self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
-                self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
+                self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
+                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.report_hz = updated_config.get("ReportHz", self.report_hz)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
             print(f"Error posting flow.hall.params: {e}")
-            # Try reverting to previous code (will only try once)
             if 'main_previous.py' in os.listdir():
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -205,7 +211,7 @@ class PicoFlowHall:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -230,66 +236,61 @@ class PicoFlowHall:
     # ---------------------------------
 
     def post_hz(self):
-        if self.report_hz:
-            url = self.base_url + f"/{self.actor_node_name}/hz"
-            payload = {
-                "AboutNodeName": self.flow_node_name,
-                "MilliHz": int(self.exp_hz * 1e3), 
-                "TypeName": "hz",
-                "Version": "001"
-                }
-            headers = {'Content-Type': 'application/json'}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting hz: {e}")
-            self.prev_hz = self.exp_hz
-            self.hz_posted_time = utime.time()
-        else:
-            return
-
+        url = self.base_url + f"/{self.actor_node_name}/hz"
+        payload = {
+            "FlowNodeName": self.flow_node_name,
+            "MilliHz": int(self.exp_hz * 1e3), 
+            "TypeName": "hz",
+            "Version": "001"
+            }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting hz: {e}")
+        self.prev_hz = self.exp_hz
+        self.hz_posted_time = utime.time()
+        
     def keep_alive(self, timer):
-        '''Post Hz, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.hz_posted_time > self.inactivity_timeout_s:
+        '''Post Hz if none were posted within the last minute'''
+        if utime.time() - self.hz_posted_time > 55 and self.report_hz:
             self.post_hz()
 
     def start_keepalive_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
-            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
+            period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.keep_alive
         )
     
     def update_hz(self, delta_us):
+        '''Compute the exponential weighted average and post on change'''
         delta_ms = delta_us / 1e3
         hz = 1e6 / delta_us
-        if delta_ms > NO_FLOW_MILLISECONDS:
+        if delta_ms > self.no_flow_milliseconds:
             self.exp_hz = 0
         elif self.exp_hz == 0:
             self.exp_hz = hz
         else:
             tw_alpha = min(1, (delta_ms / self.exp_weighting_ms) * self.alpha)
             self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
-        
-        if self.prev_hz is None:
-            self.post_hz()
-        elif abs(self.exp_hz - self.prev_hz) > self.async_capture_delta_hz:
+        if (self.prev_hz is None) or (abs(self.exp_hz - self.prev_hz) > self.async_capture_delta_hz):
             self.post_hz()
 
     # ---------------------------------
     # Posting relative timestamps
     # ---------------------------------
             
-    def post_timestamp_list(self):
-        url = self.base_url + f"/{self.actor_node_name}/ticklist"
+    def post_ticklist(self):
+        url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
-            "TypeName": "ticklist", 
+            "TypeName": "ticklist.hall", 
             "Version": "002"
             }
         headers = {'Content-Type': 'application/json'}
@@ -327,30 +328,34 @@ class PicoFlowHall:
             utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
             if (utime.time()-self.last_ticks_sent > self.publish_stamps_period_s) and (len(self.relative_us_list) > 0):
                 self.actively_publishing = True
-                self.post_timestamp_list()
+                self.post_ticklist()
                 self.last_ticks_sent = utime.time()
-                # Wait longer after the post before starting to track ticks
-                # to let the time disturbances reduce
+                # Wait after the post before starting to track ticks to let the time disturbances reduce
                 utime.sleep_ms(ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS)
                 self.actively_publishing = False
+            # If there have been no ticks in the last second, flow is 0
+            if (utime.time()-self.last_ticks_sent > 1) and (len(self.relative_us_list)==0):
+                self.update_hz(1e9)
 
     def start(self):
         self.connect_to_wifi()
         self.update_code()
         self.update_app_config()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
-        # report 0 hz every self.inactivity_timeout_s (default 60)
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
 
 if __name__ == "__main__":
     p = PicoFlowHall()
-    p.start()"""
+    p.start()
+    """
     with open('main.py', 'w') as file:
         file.write(main_code)
 
 def write_flow_reed_main():
-    main_code = """import machine
+    main_code = """
+import machine
 import utime
 import network
 import ujson
@@ -371,20 +376,18 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
-DEFAULT_DEADBAND_MILLISECONDS = 10
-DEFAULT_INACTIVITY_TIMEOUT_S = 60
-DEFAULT_NO_FLOW_MILLISECONDS = 3_000
-DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_REPORT_GPM = True
+DEFAULT_NO_FLOW_MILLISECONDS = 3_000
+DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
+DEFAULT_DEADBAND_MILLISECONDS = 10
 
 # Other constants
 PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 POST_LIST_LENGTH = 100
-CODE_UPDATE_PERIOD_S = 60
-KEEPALIVE_TIMER_PERIOD_S = 3
 
 # Available pin states
 class PinState:
@@ -400,24 +403,26 @@ class PinState:
 class PicoFlowReed:
 
     def __init__(self):
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
-        self.hw_uid = get_hw_uid()
+        # Pins
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.pin_state = None # will be initialized as PinState.DOWN
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
-        # For tracking async reports of exponential weighted GPM
+        # Reporting exp weighted average Hz
         self.exp_gpm = 0
         self.prev_gpm = None
         self.gpm_posted_time = utime.time()
-        self.posting_ticklist = False
-        # For tracking tick list
-        self.last_ticks_sent = utime.time()
-        self.latest_timestamp_ms = None
+        # Reporting relative ticklists
         self.first_tick_ms = None
         self.relative_ms_list = []
-        # Will be initialized as PinState.DOWN
-        self.pin_state = None 
+        self.last_ticks_sent = utime.time()
+        self.posting_ticklist = False
+        # Synchronous reporting on the minute
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     def state_init(self):
@@ -478,47 +483,44 @@ class PicoFlowReed:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
-        self.inactivity_timeout_s = app_config.get("InactivityTimeoutS", DEFAULT_INACTIVITY_TIMEOUT_S)
-        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
-        alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
-        gallons_per_tick_times_10000 = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000)
-        self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
-        self.alpha = alpha_times_100 / 100
-        async_delta_gpm_times_100 = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100)
-        self.async_delta_gpm = async_delta_gpm_times_100 / 100
+        self.alpha = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100) / 100
+        self.async_delta_gpm = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100) / 100        
+        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.report_gpm = app_config.get("ReportGpm", DEFAULT_REPORT_GPM)
+        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
+        self.gallons_per_tick = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000) / 10_000
+        self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
 
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
+            "CapturePeriodS": self.capture_period_s,
             "ReportGpm": self.report_gpm,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
+            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
+            "DeadbandMilliseconds": self.deadband_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/flow-reed-params"
+        url = self.base_url + f"/{self.actor_node_name}/flow-reed-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
-            "InactivityTimeoutS": self.inactivity_timeout_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
+            "CapturePeriodS": self.capture_period_s,
             "ReportGpm": self.report_gpm,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
+            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
+            "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
-            "Version": "003"
+            "Version": "004"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -528,22 +530,20 @@ class PicoFlowReed:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
+                self.alpha = updated_config.get("AlphaTimes100", int(self.alpha * 100)) / 100
+                self.async_delta_gpm = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100)) / 100
+                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
-                self.inactivity_timeout_s = updated_config.get("InactivityTimeoutS", self.inactivity_timeout_s)
                 self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
-                gallons_per_tick_times_10000 = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000))
-                self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
-                alpha_times_100 = updated_config.get("AlphaTimes100", int(self.alpha * 100))
-                self.alpha = alpha_times_100 / 100
-                async_delta_gpm_times_100 = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100))
-                self.async_delta_gpm = async_delta_gpm_times_100 / 100
+                self.gallons_per_tick = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000)) / 10_000
                 self.report_gpm = updated_config.get("ReportGpm", self.report_gpm)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
             print(f"Error posting flow.reed.params: {e}")
-            # Try reverting to previous code (will only try once)
             if 'main_previous.py' in os.listdir():
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -552,7 +552,7 @@ class PicoFlowReed:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -577,44 +577,40 @@ class PicoFlowReed:
     # ---------------------------------
 
     def post_gpm(self):
-        if self.report_gpm:
-            url = self.base_url +  f"/{self.actor_node_name}/gpm"
-            payload = {
-                "AboutNodeName": self.flow_node_name,
-                "ValueTimes100": int(100 * self.exp_gpm),
-                "TypeName": "gpm", 
-                "Version": "000"
-            }
-            headers = {"Content-Type": "application/json"}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting gpm: {e}")
-            gc.collect()
-            self.prev_gpm = self.exp_gpm
-            self.gpm_posted_time = utime.time()
-        else:
-            return
+        url = self.base_url +  f"/{self.actor_node_name}/gpm"
+        payload = {
+            "FlowNodeName": self.flow_node_name,
+            "ValueTimes100": int(100 * self.exp_gpm),
+            "TypeName": "gpm", 
+            "Version": "000"
+        }
+        headers = {"Content-Type": "application/json"}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting gpm: {e}")
+        gc.collect()
+        self.prev_gpm = self.exp_gpm
+        self.gpm_posted_time = utime.time()
 
     def keep_alive(self, timer):
-        '''Post gpm, assuming no other messages sent within inactivity timeout'''
-        if utime.time() - self.gpm_posted_time > self.inactivity_timeout_s:
+        '''Post GPM if none were posted within the last minute'''
+        if utime.time() - self.gpm_posted_time > 55 and self.report_gpm:
             self.post_gpm()
 
     def start_keepalive_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
-            period=KEEPALIVE_TIMER_PERIOD_S * 1000, 
+            period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.keep_alive
         )
 
     def update_gpm(self, delta_ms: int):
-        hz = 1000 / delta_ms
-        gpm = self.gallons_per_tick * 60 * hz
-        # If enough milliseconds have gone by, we assume the flow has stopped and reset flow to 0
+        hz = 1e3 / delta_ms
+        gpm = hz * self.gallons_per_tick * 60
         if delta_ms > self.no_flow_milliseconds:
             self.exp_gpm = 0
         elif self.exp_gpm == 0:
@@ -622,22 +618,19 @@ class PicoFlowReed:
         else:
             tw_alpha = min(1, (delta_ms / TIME_WEIGHTING_MS) * self.alpha)
             self.exp_gpm= tw_alpha * gpm + (1 - tw_alpha) * self.exp_gpm
-        
-        if  self.prev_gpm is None:
-            self.post_gpm()
-        elif abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
+        if  (self.prev_gpm is None) or abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
             self.post_gpm()
 
     # ---------------------------------
     # Posting relative timestamps
     # ---------------------------------
     
-    def post_timestamp_list(self):
+    def post_ticklist(self):
         if self.first_tick_ms is None:
             return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "PicoStartMillisecond": self.first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
@@ -671,7 +664,7 @@ class PicoFlowReed:
             # Publish the list of relative ticks when it reaches a certain length
             if len(self.relative_ms_list) >= POST_LIST_LENGTH and not (self.posting_ticklist):
                 self.posting_ticklist = True
-                self.post_timestamp_list()
+                self.post_ticklist()
                 self.posting_ticklist = False
 
             # States: down -> going up -> up -> going down -> down
@@ -727,6 +720,7 @@ class PicoFlowReed:
         self.connect_to_wifi()
         self.update_code()
         self.update_app_config()
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.state_init()
         print("Initialized")
@@ -734,12 +728,14 @@ class PicoFlowReed:
 
 if __name__ == "__main__":
     p = PicoFlowReed()
-    p.start()"""
+    p.start()
+    """
     with open('main.py', 'w') as file:
         file.write(main_code)
 
 def write_tank_module_main():
-    main_code = """import machine
+    main_code = """
+import machine
 import utime
 import network
 import ujson
@@ -760,17 +756,14 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
 DEFAULT_PICO_AB = "a"
-DEFAULT_CAPTURE_PERIOD_S = 60
-DEFAULT_CAPTURE_OFFSET_S = 0
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
-DEFAULT_REPORT_MICROVOLTS = True
 
 # Other constants
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
-CODE_UPDATE_PERIOD_S = 60
 
 # ---------------------------------
 # Main class
@@ -779,23 +772,29 @@ CODE_UPDATE_PERIOD_S = 60
 class TankModule:
 
     def __init__(self):
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
+        # Pins
+        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
+        # Measuring and repoting voltages
         self.prev_mv0 = -1
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
         self.node_names = []
+        self.microvolts_posted_time = utime.time()
+        # Synchronous reporting on the minute
+        self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     def set_names(self):
         if self.actor_node_name is None:
             raise Exception("Needs actor node name or pico number to run. Reboot!")
-        
         if self.pico_a_b == "a":
             self.node_names = [
                 f"{self.actor_node_name}-depth1", 
@@ -812,7 +811,7 @@ class TankModule:
     # ---------------------------------
     # Communication
     # ---------------------------------
-                                                                
+                                                                 
     def load_comms_config(self):
         '''Load the communication configuration file (WiFi and API base URL)'''
         try:
@@ -856,12 +855,10 @@ class TankModule:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.pico_a_b = app_config.get("PicoAB", DEFAULT_PICO_AB)
+        self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
-        self.capture_offset_milliseconds = app_config.get("CaptureOffsetS", DEFAULT_CAPTURE_OFFSET_S)
-        self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
-        self.report_micro_volts = app_config.get("ReportMicroVolts", DEFAULT_REPORT_MICROVOLTS)
 
     def save_app_config(self):
         config = {
@@ -871,13 +868,12 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "ReportMicroVolts": self.report_micro_volts,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/tank-module-params"
+        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -886,14 +882,11 @@ class TankModule:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "CaptureOffsetMilliseconds": self.capture_offset_milliseconds,
-            "ReportMicroVolts": self.report_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "000"
+            "Version": "001"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
-        
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
             if response.status_code == 200:
@@ -904,14 +897,13 @@ class TankModule:
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_milliseconds = updated_config.get("CaptureOffsetMilliseconds", self.capture_offset_milliseconds)
-                self.report_micro_volts = updated_config.get("ReportMicroVolts", self.report_micro_volts)
+                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
             print(f"Error sending tank module params: {e}")
             if 'main_previous.py' in os.listdir():
-            # Try reverting to previous code (will only try once)
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -920,7 +912,7 @@ class TankModule:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -972,31 +964,38 @@ class TankModule:
     # Posting microvolts
     # ---------------------------------
 
-    def post_microvolts(self):
-        if self.report_micro_volts:
-            url = self.base_url + f"/{self.actor_node_name}/microvolts"
-            payload = {
-                "AboutNodeNameList": self.node_names,
-                "MicroVoltsList": [self.mv0, self.mv1], 
-                "TypeName": "microvolts", 
-                "Version": "001"
-            }
-            headers = {'Content-Type': 'application/json'}
-            json_payload = ujson.dumps(payload)
-            try:
-                response = urequests.post(url, data=json_payload, headers=headers)
-                response.close()
-            except Exception as e:
-                print(f"Error posting microvolts: {e}")
+    def post_microvolts(self, idx=2):
+        url = self.base_url + f"/{self.actor_node_name}/microvolts"
+        if idx==0:
+            mv_list = [self.mv0]
+        elif idx==1:
+            mv_list = [self.mv1]
         else:
-            return
+            mv_list = [self.mv0, self.mv1]
+        payload = {
+            "HwUid": self.hw_uid,
+            "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
+            "MicroVoltsList": mv_list, 
+            "TypeName": "microvolts", 
+            "Version": "001"
+        }
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+        try:
+            response = urequests.post(url, data=json_payload, headers=headers)
+            response.close()
+        except Exception as e:
+            print(f"Error posting microvolts: {e}")
+        gc.collect()
+        self.microvolts_posted_time = utime.time()
         
     def keep_alive(self, timer):
-        '''Post microvolts'''
-        self.post_microvolts()
+        '''Post microvolts if none were posted within the last minute'''
+        if utime.time() - self.microvolts_posted_time > 55:
+            self.post_microvolts()
     
     def start_keepalive_timer(self):
-        '''Initialize the timer to post microvolts periodically'''
+        '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
@@ -1010,10 +1009,10 @@ class TankModule:
             self.mv0 = self.adc0_micros()
             self.mv1 = self.adc1_micros()
             if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
-                self.post_microvolts()
+                self.post_microvolts(idx=0)
                 self.prev_mv0 = self.mv0
             if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
-                self.post_microvolts()
+                self.post_microvolts(idx=1)
                 self.prev_mv1 = self.mv1
             utime.sleep_ms(100)
 
@@ -1022,13 +1021,14 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
-        #utime.sleep_ms(self.capture_offset_milliseconds)
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
 
 if __name__ == "__main__":
     t = TankModule()
-    t.start()"""
+    t.start()
+    """
     with open('main.py', 'w') as file:
         file.write(main_code)
 
