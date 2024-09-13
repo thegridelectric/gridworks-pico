@@ -21,15 +21,14 @@ DEFAULT_ACTOR_NAME = "pico-flow-hall"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_HZ = 1
+DEFAULT_EXP_WEIGHTING_MS = 40
 DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
 DEFAULT_CAPTURE_PERIOD_S = 60
-DEFAULT_EXP_WEIGHTING_MS = 40
 DEFAULT_REPORT_HZ = True
+DEFAULT_NO_FLOW_MILLISECONDS = 1000
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
-CODE_UPDATE_PERIOD_S = 60
-NO_FLOW_MILLISECONDS = 1000
 ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS = 200
 MAIN_LOOP_MILLISECONDS = 100
 
@@ -40,22 +39,24 @@ MAIN_LOOP_MILLISECONDS = 100
 class PicoFlowHall:
 
     def __init__(self):
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
+        # Pins
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
-        # For tracking async reports of exponential weighted frequency
+        # Reporting exp weighted average Hz
         self.exp_hz = 0
         self.prev_hz = None
         self.hz_posted_time = utime.time()
-        # For tracking tick list
-        self.last_ticks_sent = utime.time()
-        # There is a time lag between posting the ticks and starting off capturing ticks
-        # and this is the microseconds of the first tick in a batch
+        # Reporting relative ticklists
         self.first_tick_us = None
         self.relative_us_list = []
+        self.last_ticks_sent = utime.time()
         self.actively_publishing = False
+        # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
@@ -106,13 +107,13 @@ class PicoFlowHall:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
-        self.alpha = alpha_times_100 / 100
+        self.alpha = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100) / 100
         self.async_capture_delta_hz = app_config.get("AsyncCaptureDeltaHz", DEFAULT_ASYNC_CAPTURE_DELTA_HZ)
+        self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
         self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
-        self.exp_weighting_ms = app_config.get("ExpWeightingMs", DEFAULT_EXP_WEIGHTING_MS)
         self.report_hz = app_config.get("ReportHz", DEFAULT_REPORT_HZ)
+        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -121,27 +122,29 @@ class PicoFlowHall:
             "FlowNodeName": self.flow_node_name,
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
+            "ExpWeightingMs": self.exp_weighting_ms,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "CapturePeriodS": self.capture_period_s,
-            "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
         '''Post current parameters, and update parameters based on the server response'''
-        url = self.base_url + "/flow-hall-params"
+        url = self.base_url + f"/{self.actor_node_name}/flow-hall-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncCaptureDeltaHz": self.async_capture_delta_hz,
+            "ExpWeightingMs": self.exp_weighting_ms,
             "PublishStampsPeriodS": self.publish_stamps_period_s,
             "CapturePeriodS": self.capture_period_s,
-            "ExpWeightingMs": self.exp_weighting_ms,
             "ReportHz": self.report_hz,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
             "TypeName": "flow.hall.params",
             "Version": "002"
         }
@@ -155,17 +158,18 @@ class PicoFlowHall:
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
                 self.alpha = updated_config.get("AlphaTimes100", self.alpha * 100) / 100
                 self.async_capture_delta_hz = updated_config.get("AsyncCaptureDeltaHz", self.async_capture_delta_hz)
+                self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
                 self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.exp_weighting_ms = updated_config.get("ExpWeightingMs", self.exp_weighting_ms)
                 self.report_hz = updated_config.get("ReportHz", self.report_hz)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
             print(f"Error posting flow.hall.params: {e}")
-            # Try reverting to previous code (will only try once)
             if 'main_previous.py' in os.listdir():
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -174,7 +178,7 @@ class PicoFlowHall:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -201,7 +205,7 @@ class PicoFlowHall:
     def post_hz(self):
         url = self.base_url + f"/{self.actor_node_name}/hz"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "MilliHz": int(self.exp_hz * 1e3), 
             "TypeName": "hz",
             "Version": "001"
@@ -217,7 +221,7 @@ class PicoFlowHall:
         self.hz_posted_time = utime.time()
         
     def keep_alive(self, timer):
-        '''Periodically post Hz if none were posted within the last minute'''
+        '''Post Hz if none were posted within the last minute'''
         if utime.time() - self.hz_posted_time > 55 and self.report_hz:
             self.post_hz()
 
@@ -230,32 +234,30 @@ class PicoFlowHall:
         )
     
     def update_hz(self, delta_us):
+        '''Compute the exponential weighted average and post on change'''
         delta_ms = delta_us / 1e3
         hz = 1e6 / delta_us
-        if delta_ms > NO_FLOW_MILLISECONDS:
+        if delta_ms > self.no_flow_milliseconds:
             self.exp_hz = 0
         elif self.exp_hz == 0:
             self.exp_hz = hz
         else:
             tw_alpha = min(1, (delta_ms / self.exp_weighting_ms) * self.alpha)
             self.exp_hz = tw_alpha * hz + (1 - tw_alpha) * self.exp_hz
-        
-        if self.prev_hz is None:
-            self.post_hz()
-        elif abs(self.exp_hz - self.prev_hz) > self.async_capture_delta_hz:
+        if (self.prev_hz is None) or (abs(self.exp_hz - self.prev_hz) > self.async_capture_delta_hz):
             self.post_hz()
 
     # ---------------------------------
     # Posting relative timestamps
     # ---------------------------------
             
-    def post_timestamp_list(self):
-        url = self.base_url + f"/{self.actor_node_name}/ticklist"
+    def post_ticklist(self):
+        url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
-            "TypeName": "ticklist", 
+            "TypeName": "ticklist.hall", 
             "Version": "002"
             }
         headers = {'Content-Type': 'application/json'}
@@ -293,10 +295,9 @@ class PicoFlowHall:
             utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
             if (utime.time()-self.last_ticks_sent > self.publish_stamps_period_s) and (len(self.relative_us_list) > 0):
                 self.actively_publishing = True
-                self.post_timestamp_list()
+                self.post_ticklist()
                 self.last_ticks_sent = utime.time()
-                # Wait longer after the post before starting to track ticks
-                # to let the time disturbances reduce
+                # Wait after the post before starting to track ticks to let the time disturbances reduce
                 utime.sleep_ms(ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS)
                 self.actively_publishing = False
             # If there have been no ticks in the last second, flow is 0

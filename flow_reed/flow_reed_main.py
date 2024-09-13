@@ -19,19 +19,18 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
-DEFAULT_DEADBAND_MILLISECONDS = 10
-DEFAULT_CAPTURE_PERIOD_S = 60
-DEFAULT_NO_FLOW_MILLISECONDS = 3_000
-DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
 DEFAULT_ALPHA_TIMES_100 = 10
 DEFAULT_ASYNC_DELTA_GPM_TIMES_100 = 10
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_REPORT_GPM = True
+DEFAULT_NO_FLOW_MILLISECONDS = 3_000
+DEFAULT_GALLONS_PER_TICK_TIMES_10000 = 748
+DEFAULT_DEADBAND_MILLISECONDS = 10
 
 # Other constants
 PULSE_PIN = 0 # This is pin 1
 TIME_WEIGHTING_MS = 800
 POST_LIST_LENGTH = 100
-CODE_UPDATE_PERIOD_S = 60
 
 # Available pin states
 class PinState:
@@ -47,23 +46,25 @@ class PinState:
 class PicoFlowReed:
 
     def __init__(self):
-        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
+        # Pins
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.pin_state = None # will be initialized as PinState.DOWN
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
-        # For tracking async reports of exponential weighted GPM
+        # Reporting exp weighted average Hz
         self.exp_gpm = 0
         self.prev_gpm = None
         self.gpm_posted_time = utime.time()
-        self.posting_ticklist = False
-        # For tracking tick list
-        self.last_ticks_sent = utime.time()
-        self.latest_timestamp_ms = None
+        # Reporting relative ticklists
         self.first_tick_ms = None
         self.relative_ms_list = []
-        # Will be initialized as PinState.DOWN
-        self.pin_state = None 
+        self.last_ticks_sent = utime.time()
+        self.posting_ticklist = False
+        # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
@@ -125,45 +126,42 @@ class PicoFlowReed:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
+        self.alpha = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100) / 100
+        self.async_delta_gpm = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100) / 100        
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
-        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
-        alpha_times_100 = app_config.get("AlphaTimes100", DEFAULT_ALPHA_TIMES_100)
-        gallons_per_tick_times_10000 = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000)
-        self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
-        self.alpha = alpha_times_100 / 100
-        async_delta_gpm_times_100 = app_config.get("AsyncDeltaGpmTimes100", DEFAULT_ASYNC_DELTA_GPM_TIMES_100)
-        self.async_delta_gpm = async_delta_gpm_times_100 / 100
         self.report_gpm = app_config.get("ReportGpm", DEFAULT_REPORT_GPM)
+        self.no_flow_milliseconds = app_config.get("NoFlowMilliseconds", DEFAULT_NO_FLOW_MILLISECONDS)
+        self.gallons_per_tick = app_config.get("GallonsPerTickTimes10000", DEFAULT_GALLONS_PER_TICK_TIMES_10000) / 10_000
+        self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
 
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
-            "CapturePeriodS": self.capture_period_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
+            "CapturePeriodS": self.capture_period_s,
             "ReportGpm": self.report_gpm,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
+            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
+            "DeadbandMilliseconds": self.deadband_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/flow-reed-params"
+        url = self.base_url + f"/{self.actor_node_name}/flow-reed-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "DeadbandMilliseconds": self.deadband_milliseconds,
-            "CapturePeriodS": self.capture_period_s,
-            "NoFlowMilliseconds": self.no_flow_milliseconds,
-            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "AlphaTimes100": int(self.alpha * 100),
             "AsyncDeltaGpmTimes100": int(self.async_delta_gpm * 100),
+            "CapturePeriodS": self.capture_period_s,
             "ReportGpm": self.report_gpm,
+            "NoFlowMilliseconds": self.no_flow_milliseconds,
+            "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
+            "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
             "Version": "004"
         }
@@ -175,23 +173,20 @@ class PicoFlowReed:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
-                self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
+                self.alpha = updated_config.get("AlphaTimes100", int(self.alpha * 100)) / 100
+                self.async_delta_gpm = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100)) / 100
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
+                self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
                 self.no_flow_milliseconds = updated_config.get("NoFlowMilliseconds", self.no_flow_milliseconds)
-                gallons_per_tick_times_10000 = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000))
-                self.gallons_per_tick = gallons_per_tick_times_10000 / 10_000
-                alpha_times_100 = updated_config.get("AlphaTimes100", int(self.alpha * 100))
-                self.alpha = alpha_times_100 / 100
-                async_delta_gpm_times_100 = updated_config.get("AsyncDeltaGpmTimes100", int(self.async_delta_gpm * 100))
-                self.async_delta_gpm = async_delta_gpm_times_100 / 100
+                self.gallons_per_tick = updated_config.get("GallonsPerTickTimes10000", int(self.gallons_per_tick*10_000)) / 10_000
                 self.report_gpm = updated_config.get("ReportGpm", self.report_gpm)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
             print(f"Error posting flow.reed.params: {e}")
-            # Try reverting to previous code (will only try once)
             if 'main_previous.py' in os.listdir():
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -200,7 +195,7 @@ class PicoFlowReed:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -227,7 +222,7 @@ class PicoFlowReed:
     def post_gpm(self):
         url = self.base_url +  f"/{self.actor_node_name}/gpm"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "ValueTimes100": int(100 * self.exp_gpm),
             "TypeName": "gpm", 
             "Version": "000"
@@ -244,7 +239,7 @@ class PicoFlowReed:
         self.gpm_posted_time = utime.time()
 
     def keep_alive(self, timer):
-        '''Periodically post Hz if none were posted within the last minute'''
+        '''Post GPM if none were posted within the last minute'''
         if utime.time() - self.gpm_posted_time > 55 and self.report_gpm:
             self.post_gpm()
 
@@ -257,9 +252,8 @@ class PicoFlowReed:
         )
 
     def update_gpm(self, delta_ms: int):
-        hz = 1000 / delta_ms
-        gpm = self.gallons_per_tick * 60 * hz
-        # If enough milliseconds have gone by, we assume the flow has stopped and reset flow to 0
+        hz = 1e3 / delta_ms
+        gpm = hz * self.gallons_per_tick * 60
         if delta_ms > self.no_flow_milliseconds:
             self.exp_gpm = 0
         elif self.exp_gpm == 0:
@@ -267,22 +261,19 @@ class PicoFlowReed:
         else:
             tw_alpha = min(1, (delta_ms / TIME_WEIGHTING_MS) * self.alpha)
             self.exp_gpm= tw_alpha * gpm + (1 - tw_alpha) * self.exp_gpm
-        
-        if  self.prev_gpm is None:
-            self.post_gpm()
-        elif abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
+        if  (self.prev_gpm is None) or abs(self.exp_gpm - self.prev_gpm) > self.async_delta_gpm:
             self.post_gpm()
 
     # ---------------------------------
     # Posting relative timestamps
     # ---------------------------------
     
-    def post_timestamp_list(self):
+    def post_ticklist(self):
         if self.first_tick_ms is None:
             return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
-            "AboutNodeName": self.flow_node_name,
+            "FlowNodeName": self.flow_node_name,
             "PicoStartMillisecond": self.first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
@@ -316,7 +307,7 @@ class PicoFlowReed:
             # Publish the list of relative ticks when it reaches a certain length
             if len(self.relative_ms_list) >= POST_LIST_LENGTH and not (self.posting_ticklist):
                 self.posting_ticklist = True
-                self.post_timestamp_list()
+                self.post_ticklist()
                 self.posting_ticklist = False
 
             # States: down -> going up -> up -> going down -> down

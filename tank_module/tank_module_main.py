@@ -19,15 +19,14 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
 DEFAULT_PICO_AB = "a"
-DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
+DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
 # Other constants
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
-CODE_UPDATE_PERIOD_S = 60
 
 # ---------------------------------
 # Main class
@@ -36,24 +35,29 @@ CODE_UPDATE_PERIOD_S = 60
 class TankModule:
 
     def __init__(self):
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
+        # Pins
+        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        # Load configuration files
         self.load_comms_config()
         self.load_app_config()
+        # Measuring and repoting voltages
         self.prev_mv0 = -1
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
         self.node_names = []
+        self.microvolts_posted_time = utime.time()
+        # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
 
     def set_names(self):
         if self.actor_node_name is None:
             raise Exception("Needs actor node name or pico number to run. Reboot!")
-        
         if self.pico_a_b == "a":
             self.node_names = [
                 f"{self.actor_node_name}-depth1", 
@@ -114,10 +118,10 @@ class TankModule:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.pico_a_b = app_config.get("PicoAB", DEFAULT_PICO_AB)
+        self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
-        self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
 
     def save_app_config(self):
         config = {
@@ -132,7 +136,7 @@ class TankModule:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + "/tank-module-params"
+        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -146,7 +150,6 @@ class TankModule:
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
-        
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
             if response.status_code == 200:
@@ -163,7 +166,7 @@ class TankModule:
         except Exception as e:
             print(f"Error sending tank module params: {e}")
             if 'main_previous.py' in os.listdir():
-            # Try reverting to previous code (will only try once)
+                print("Reverting to previous code.")
                 os.rename('main_previous.py', 'main_revert.py')
                 machine.reset()
 
@@ -172,7 +175,7 @@ class TankModule:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + "/code-update"
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -246,13 +249,16 @@ class TankModule:
             response.close()
         except Exception as e:
             print(f"Error posting microvolts: {e}")
+        gc.collect()
+        self.microvolts_posted_time = utime.time()
         
     def keep_alive(self, timer):
-        '''Post microvolts'''
-        self.post_microvolts()
+        '''Post microvolts if none were posted within the last minute'''
+        if utime.time() - self.microvolts_posted_time > 55:
+            self.post_microvolts()
     
     def start_keepalive_timer(self):
-        '''Initialize the timer to post microvolts periodically'''
+        '''Initialize the timer to call self.keep_alive periodically'''
         self.keepalive_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
