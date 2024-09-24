@@ -179,7 +179,7 @@ class PicoFlowHall:
             "ReportHz": self.report_hz,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "TypeName": "flow.hall.params",
-            "Version": "002"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -216,7 +216,7 @@ class PicoFlowHall:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -241,7 +241,7 @@ class PicoFlowHall:
             "FlowNodeName": self.flow_node_name,
             "MilliHz": int(self.exp_hz * 1e3), 
             "TypeName": "hz",
-            "Version": "001"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -291,7 +291,7 @@ class PicoFlowHall:
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist.hall", 
-            "Version": "002"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -520,7 +520,7 @@ class PicoFlowReed:
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
-            "Version": "004"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -557,7 +557,7 @@ class PicoFlowReed:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -582,7 +582,7 @@ class PicoFlowReed:
             "FlowNodeName": self.flow_node_name,
             "ValueTimes100": int(100 * self.exp_gpm),
             "TypeName": "gpm", 
-            "Version": "000"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -634,7 +634,7 @@ class PicoFlowReed:
             "PicoStartMillisecond": self.first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
-            "Version": "000"
+            "Version": "100"
         }
 
         headers = {"Content-Type": "application/json"}
@@ -883,7 +883,7 @@ class TankModule:
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "001"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -917,7 +917,7 @@ class TankModule:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -977,7 +977,7 @@ class TankModule:
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
             "TypeName": "microvolts", 
-            "Version": "001"
+            "Version": "100"
         }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)

@@ -146,7 +146,7 @@ class PicoFlowHall:
             "ReportHz": self.report_hz,
             "NoFlowMilliseconds": self.no_flow_milliseconds,
             "TypeName": "flow.hall.params",
-            "Version": "002"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -183,7 +183,7 @@ class PicoFlowHall:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -208,7 +208,7 @@ class PicoFlowHall:
             "FlowNodeName": self.flow_node_name,
             "MilliHz": int(self.exp_hz * 1e3), 
             "TypeName": "hz",
-            "Version": "001"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -258,7 +258,7 @@ class PicoFlowHall:
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist.hall", 
-            "Version": "002"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)

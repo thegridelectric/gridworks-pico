@@ -146,7 +146,7 @@ class TankModule:
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "001"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -180,7 +180,7 @@ class TankModule:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -240,7 +240,7 @@ class TankModule:
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
             "TypeName": "microvolts", 
-            "Version": "001"
+            "Version": "100"
         }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)

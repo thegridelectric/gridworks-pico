@@ -163,7 +163,7 @@ class PicoFlowReed:
             "GallonsPerTickTimes10000": int(self.gallons_per_tick * 10_000),
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
-            "Version": "004"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -200,7 +200,7 @@ class PicoFlowReed:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
-            "Version": "000"
+            "Version": "100"
         }
         json_payload = ujson.dumps(payload)
         headers = {"Content-Type": "application/json"}
@@ -225,7 +225,7 @@ class PicoFlowReed:
             "FlowNodeName": self.flow_node_name,
             "ValueTimes100": int(100 * self.exp_gpm),
             "TypeName": "gpm", 
-            "Version": "000"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -277,7 +277,7 @@ class PicoFlowReed:
             "PicoStartMillisecond": self.first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
-            "Version": "000"
+            "Version": "100"
         }
 
         headers = {"Content-Type": "application/json"}

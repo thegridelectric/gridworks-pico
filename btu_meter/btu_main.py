@@ -176,7 +176,7 @@ class PicoBTU:
             "ActorNodeName": self.actor_node_name,
             "CapturePeriodS": self.capture_period_s,
             "TypeName": "btu.params",
-            "Version": "000",
+            "Version": "100",
             # Flow
             "FlowNodeName": self.flow_node_name,
             "AlphaTimes100": int(self.alpha * 100),
@@ -264,7 +264,7 @@ class PicoBTU:
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
             "TypeName": "microvolts", 
-            "Version": "001"
+            "Version": "100"
         }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -282,7 +282,7 @@ class PicoBTU:
             "FlowNodeName": self.flow_node_name,
             "MilliHz": int(self.exp_hz * 1e3), 
             "TypeName": "hz",
-            "Version": "001"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -330,7 +330,7 @@ class PicoBTU:
             "PicoStartMillisecond": self.first_tick_us // 1000,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist.hall", 
-            "Version": "002"
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
