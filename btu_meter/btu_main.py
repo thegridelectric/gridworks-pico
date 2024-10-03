@@ -17,8 +17,8 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Pins
-ADC0_PIN_NUMBER = 26
-ADC1_PIN_NUMBER = 27
+ADC0_PIN_NUMBER = 26   # (COLD)
+ADC1_PIN_NUMBER = 27  #(HOT)
 PULSE_PIN = 28
 
 # Default parameters
@@ -82,8 +82,8 @@ class PicoBTU:
         if self.actor_node_name is None:
             raise Exception("Needs an actor node name to run.")
         self.node_names = [
-            f"{self.actor_node_name}-ewt", 
-            f"{self.actor_node_name}-lwt"
+            f"{self.actor_node_name}-cold", 
+            f"{self.actor_node_name}-hot"
         ]
 
     # ---------------------------------
