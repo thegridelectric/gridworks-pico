@@ -82,8 +82,8 @@ class PicoBTU:
         if self.actor_node_name is None:
             raise Exception("Needs an actor node name to run.")
         self.node_names = [
-            f"{self.actor_node_name}-cold", 
-            f"{self.actor_node_name}-hot"
+            f"{self.flow_node_name}-cold", 
+            f"{self.flow_node_name}-hot"
         ]
 
     # ---------------------------------
@@ -397,7 +397,7 @@ class PicoBTU:
         self.update_app_config()
         self.set_names()
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
-        #utime.sleep(self.capture_offset_seconds)
+        utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
 
