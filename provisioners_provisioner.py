@@ -284,7 +284,7 @@ elif 'main_revert.py' in os.listdir():
         payload = {
             "HwUid": hw_uid,
             "TypeName": "new.pico",
-            "Version": "000"
+            "Version": "100"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -302,7 +302,7 @@ elif 'main_revert.py' in os.listdir():
             payload = {
                 "HwUid": hw_uid,
                 "TypeName": "new.pico",
-                "Version": "000"
+                "Version": "100"
             }
             headers = {"Content-Type": "application/json"}
             json_payload = ujson.dumps(payload)
