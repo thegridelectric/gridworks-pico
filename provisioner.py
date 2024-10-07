@@ -24,6 +24,8 @@ if 'comms_config.json' in os.listdir():
     os.remove('comms_config.json')
 if 'main.py' in os.listdir():
     os.remove('main.py')
+if 'main_previous.py' in os.listdir():
+    os.remove('main_previous.py')
 
 # *************************
 # 1/3 - MAIN.PY PROVISION
