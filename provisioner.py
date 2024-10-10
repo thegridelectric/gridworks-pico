@@ -91,6 +91,7 @@ class PicoFlowHall:
         self.relative_us_list = []
         self.last_ticks_sent = utime.time()
         self.actively_publishing = False
+        self.time_at_first_tick_ms = utime.time()*1000
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
@@ -290,7 +291,7 @@ class PicoFlowHall:
         url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "PicoStartMillisecond": self.first_tick_us // 1000,
+            "PicoStartMillisecond": self.time_at_first_tick_ms,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist.hall", 
             "Version": "100"
@@ -317,6 +318,7 @@ class PicoFlowHall:
             # Initialize the timestamp if this is the first pulse
             if self.first_tick_us is None:
                 self.first_tick_us = current_timestamp_us
+                self.time_at_first_tick_ms += utime.ticks_ms()
                 self.relative_us_list.append(0)
                 return
             relative_us = current_timestamp_us - self.first_tick_us
@@ -633,7 +635,7 @@ class PicoFlowReed:
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "PicoStartMillisecond": self.first_tick_ms,
+            "PicoStartMillisecond": self.time_at_first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
             "Version": "100"
@@ -656,6 +658,7 @@ class PicoFlowReed:
 
     def main_loop(self):
 
+        self.time_at_first_tick_ms = utime.time()*1000
         time_since_0 = utime.ticks_ms()
         time_since_1 = utime.ticks_ms()
         self.first_tick_ms = None
@@ -681,6 +684,7 @@ class PicoFlowReed:
                 # This is the state change we track for tick deltas
                 if self.first_tick_ms is None:
                     self.first_tick_ms = current_time_ms
+                    self.time_at_first_tick_ms += utime.ticks_ms()
                     self.relative_ms_list.append(0)
                 else:
                     relative_ms = current_time_ms - self.first_tick_ms
