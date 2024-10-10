@@ -56,6 +56,7 @@ class PicoFlowHall:
         self.relative_us_list = []
         self.last_ticks_sent = utime.time()
         self.actively_publishing = False
+        self.time_at_first_tick_ms = utime.time()*1000
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.keepalive_timer = machine.Timer(-1)
@@ -255,7 +256,7 @@ class PicoFlowHall:
         url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "PicoStartMillisecond": self.first_tick_us // 1000,
+            "PicoStartMillisecond": self.time_at_first_tick_ms,
             "RelativeMicrosecondList": self.relative_us_list,
             "TypeName": "ticklist.hall", 
             "Version": "100"
@@ -282,6 +283,7 @@ class PicoFlowHall:
             # Initialize the timestamp if this is the first pulse
             if self.first_tick_us is None:
                 self.first_tick_us = current_timestamp_us
+                self.time_at_first_tick_ms += utime.ticks_ms()
                 self.relative_us_list.append(0)
                 return
             relative_us = current_timestamp_us - self.first_tick_us

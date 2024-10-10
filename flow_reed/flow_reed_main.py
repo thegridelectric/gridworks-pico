@@ -274,7 +274,7 @@ class PicoFlowReed:
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "PicoStartMillisecond": self.first_tick_ms,
+            "PicoStartMillisecond": self.time_at_first_tick_ms,
             "RelativeMillisecondList": self.relative_ms_list, 
             "TypeName": "ticklist.reed", 
             "Version": "100"
@@ -297,6 +297,7 @@ class PicoFlowReed:
 
     def main_loop(self):
 
+        self.time_at_first_tick_ms = utime.time()*1000
         time_since_0 = utime.ticks_ms()
         time_since_1 = utime.ticks_ms()
         self.first_tick_ms = None
@@ -322,6 +323,7 @@ class PicoFlowReed:
                 # This is the state change we track for tick deltas
                 if self.first_tick_ms is None:
                     self.first_tick_ms = current_time_ms
+                    self.time_at_first_tick_ms += utime.ticks_ms()
                     self.relative_ms_list.append(0)
                 else:
                     relative_ms = current_time_ms - self.first_tick_ms
