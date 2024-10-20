@@ -177,24 +177,29 @@ class PicoFlowHall:
     def pulse_callback(self, pin):
         '''Compute the relative timestamp and add it to a list'''
         if not self.actively_publishing:
-            current_timestamp_us = utime.ticks_us()
-            # Initialize the timestamp if this is the first pulse
-            if self.first_tick_us is None:
-                self.first_tick_us = current_timestamp_us
-                self.time_at_first_tick_ns = utime.time_ns()
-                self.relative_us_list.append(0)
-            else:
-                relative_us = current_timestamp_us - self.first_tick_us
-                if relative_us - self.relative_us_list[-1] > 1e3:
-                    self.relative_us_list.append(relative_us)
+            self.relative_us_list.append(utime.ticks_us())
+            # current_timestamp_us = utime.ticks_us()
+            
+            # if self.first_tick_us is None:
+            #     self.first_tick_us = current_timestamp_us
+            #     self.time_at_first_tick_ns = utime.time_ns()
+            #     self.relative_us_list.append(0)
+            # else:
+            #     relative_us = current_timestamp_us - self.first_tick_us
+            #     if relative_us - self.relative_us_list[-1] > 1e3:
+            #         self.relative_us_list.append(relative_us)
 
     def post_ticklist(self):
         url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
+        time_at_first_tick = 0
+        if len(self.relative_us_list) > 0:
+            time_at_first_tick = self.relative_us_list[0]
+
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestamp": self.time_at_first_tick_ns,
+            "FirsTickTimestamp": time_at_first_tick,
             "RelativeMicrosecondList": self.relative_us_list,
-            "PicoTimeBeforePost": utime.time_ns(),
+            "PicoTimeBeforePost": utime.time_ns() // 1000,
             "TypeName": "ticklist.hall", 
             "Version": "101"
             }
