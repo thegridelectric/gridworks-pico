@@ -259,7 +259,9 @@ elif 'main_revert.py' in os.listdir():
     
     while not wlan.isconnected():
 
-        wifi_name = input("Enter wifi name: ")
+        wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
+        if wifi_name == "":
+            wifi_name = "GridWorks"
         wifi_pass = input("Enter wifi password: ")
 
         time_waiting_connection = 0
@@ -280,7 +282,7 @@ elif 'main_revert.py' in os.listdir():
     connected_to_api = False
     while not connected_to_api:
 
-        hostname = input("Enter hostname (e.g., 'fir2' or an IP address): ")
+        hostname = input("Enter hostname (e.g., 'fir' or an IP address): ")
         base_url = f"http://{hostname}.local:8000"
         url = base_url + "/new-pico"
         payload = {
