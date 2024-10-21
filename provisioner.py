@@ -54,12 +54,11 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "pico-flow-hall"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
-DEFAULT_PUBLISH_STAMPS_PERIOD_S = 10
-DEFAULT_PUBLISH_EMPTY_STAMPS_AFTER_S = 60
+DEFAULT_PUBLISH_TICKLIST_PERIOD_S = 10
+DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S = 60
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
-ACTIVELY_PUBLISHING_AFTER_POST_MILLISECONDS = 200
 MAIN_LOOP_MILLISECONDS = 100
 
 # ---------------------------------
@@ -78,13 +77,12 @@ class PicoFlowHall:
         self.load_comms_config()
         self.load_app_config()
         # Creating relative ticklists
-        self.first_tick_us = None
         self.relative_us_list = []
+        self.first_tick_us = None
+        self.time_at_first_tick_ns = None
         # Posting ticklists
         self.last_ticks_sent = utime.time()
-        self.actively_publishing = False
-        # Synchronous reporting on the minute
-        self.capture_offset_seconds = 0
+        self.actively_publishing_ticklist = False
 
     # ---------------------------------
     # Communication
@@ -95,6 +93,11 @@ class PicoFlowHall:
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
+
+            # Edit the base url
+            old_base_url = comms_config.get("BaseUrl")
+            new_base_url = 'http://beech.local:8000'
+
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_name = comms_config.get("WifiName")
@@ -133,16 +136,16 @@ class PicoFlowHall:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
-        self.publish_stamps_period_s = app_config.get("PublishStampsPeriodS", DEFAULT_PUBLISH_STAMPS_PERIOD_S)
-        self.publish_empty_stamps_after_s = app_config.get("PublishEmptyStampsAfterS", DEFAULT_PUBLISH_EMPTY_STAMPS_AFTER_S)
+        self.publish_ticklist_period_s = app_config.get("PublishTicklistPeriodS", DEFAULT_PUBLISH_TICKLIST_PERIOD_S)
+        self.publish_empty_ticklist_after_s = app_config.get("PublishEmptyTicklistAfterS", DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "PublishEmptyStampsAfterS": self.publish_empty_stamps_after_s,
+            "PublishTicklistPeriodS": self.publish_ticklist_period_s,
+            "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -154,8 +157,8 @@ class PicoFlowHall:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
-            "PublishStampsPeriodS": self.publish_stamps_period_s,
-            "PublishEmptyStampsAfterS": self.publish_empty_stamps_after_s,
+            "PublishTicklistPeriodS": self.publish_ticklist_period_s,
+            "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             "TypeName": "flow.hall.params",
             "Version": "101"
         }
@@ -167,9 +170,8 @@ class PicoFlowHall:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
-                self.publish_stamps_period_s = updated_config.get("PublishStampsPeriodS", self.publish_stamps_period_s)
-                self.publish_empty_stamps_after_s = updated_config.get("PublishEmptyStampsAfterS", self.publish_empty_stamps_after_s)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                self.publish_ticklist_period_s = updated_config.get("PublishTicklistPeriodS", self.publish_ticklist_period_s)
+                self.publish_empty_ticklist_after_s = updated_config.get("PublishEmptyTicklistAfterS", self.publish_empty_ticklist_after_s)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -210,7 +212,7 @@ class PicoFlowHall:
             
     def pulse_callback(self, pin):
         '''Compute the relative timestamp and add it to a list'''
-        if not self.actively_publishing:
+        if not self.actively_publishing_ticklist:
             current_timestamp_us = utime.ticks_us()
             # Initialize the timestamp if this is the first pulse
             if self.first_tick_us is None:
@@ -242,18 +244,19 @@ class PicoFlowHall:
         gc.collect()
         self.relative_us_list = []
         self.first_tick_us = None
+        self.time_at_first_tick_ns = None
 
     def main_loop(self):
         '''Post the relative timestamps list periodically'''
         while True:
             utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
-            if ((self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_stamps_period_s) 
+            if ((self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_ticklist_period_s) 
                 or 
-                (not self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_empty_stamps_after_s)):
-                self.actively_publishing = True
+                (not self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_empty_ticklist_after_s)):
+                self.actively_publishing_ticklist = True
                 self.post_ticklist()
                 self.last_ticks_sent = utime.time()
-                self.actively_publishing = False
+                self.actively_publishing_ticklist = False
 
     def start(self):
         self.connect_to_wifi()
@@ -292,12 +295,12 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
+DEFAULT_PUBLISH_TICKLIST_LENGTH = 10
+DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S = 180
 DEFAULT_DEADBAND_MILLISECONDS = 10
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
-TIME_WEIGHTING_MS = 800
-POST_LIST_LENGTH = 10
 
 # Available pin states
 class PinState:
@@ -323,11 +326,12 @@ class PicoFlowReed:
         self.load_comms_config()
         self.load_app_config()
         # Reporting relative ticklists
-        self.first_tick_ms = None
         self.relative_ms_list = []
-        self.posting_ticklist = False
-        # Sync time with Pi
-        self.capture_offset_seconds = 0
+        self.first_tick_ms = None
+        self.time_at_first_tick_ns = None
+        # Posting ticklists
+        self.last_ticks_sent = utime.time()
+        self.actively_publishing_ticklist = False
 
     def state_init(self):
         in_down_state = False
@@ -387,12 +391,16 @@ class PicoFlowReed:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
+        self.publish_ticklist_length = app_config.get("PublishTicklistLength", DEFAULT_PUBLISH_TICKLIST_LENGTH)
+        self.publish_any_ticklist_after_s = app_config.get("PublishAnyTicklistAfterS", DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S)
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
 
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
+            "PublishTicklistLength": self.publish_ticklist_length,
+            "PublishAnyTicklistAfterS": self.publish_any_ticklist_after_s,
             "DeadbandMilliseconds": self.deadband_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
@@ -404,6 +412,8 @@ class PicoFlowReed:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
+            "PublishTicklistLength": self.publish_ticklist_length,
+            "PublishAnyTicklistAfterS": self.publish_any_ticklist_after_s,
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
             "Version": "101"
@@ -416,8 +426,9 @@ class PicoFlowReed:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
+                self.publish_ticklist_length = updated_config.get("PublishTicklistLength", self.publish_ticklist_length)
+                self.publish_any_ticklist_after_s = updated_config.get("PublishAnyTicklistAfterS", self.publish_any_ticklist_after_s)
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -457,8 +468,6 @@ class PicoFlowReed:
     # ---------------------------------
     
     def post_ticklist(self):
-        if self.first_tick_ms is None:
-            return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "HwUid": self.hw_uid,
@@ -478,6 +487,7 @@ class PicoFlowReed:
         gc.collect()
         self.relative_ms_list = []
         self.first_tick_ms = None
+        self.time_at_first_tick_ns = None
 
     # ---------------------------------
     # Receive and publish ticks
@@ -491,11 +501,14 @@ class PicoFlowReed:
 
         while(True):  
 
-            # Publish the list of relative ticks when it reaches a certain length
-            if len(self.relative_ms_list) >= POST_LIST_LENGTH and not (self.posting_ticklist):
-                self.posting_ticklist = True
-                self.post_ticklist()
-                self.posting_ticklist = False
+            # Publish ticklist when it reaches a certain length, or after some time
+            if (len(self.relative_ms_list) >= self.publish_ticklist_length or
+                utime.time() - self.last_ticks_sent > self.publish_any_ticklist_after_s):
+                if not self.actively_publishing_ticklist:
+                    self.actively_publishing_ticklist = True
+                    self.post_ticklist()
+                    self.last_ticks_sent = utime.time()
+                    self.actively_publishing_ticklist = False
 
             # States: down -> going up -> up -> going down -> down
             current_reading = self.pulse_pin.value()
@@ -1041,8 +1054,6 @@ elif 'main_revert.py' in os.listdir():
                 break
 
     print(f"Connected to wifi '{wifi_name}'.\n")
-    wifi_name = 'gridworks'
-    wifi_pass = input('Enter the wifi password for gridworks: ')
 
     # Connect to API
 
@@ -1090,9 +1101,6 @@ elif 'main_revert.py' in os.listdir():
     print(f"Connected to the API hosted in '{base_url}'.")
 
     # Write the parameters to comms_config.json
-
-    new_hostname = input('True hostname: ')
-    base_url = f"http://{new_hostname}:8000"
 
     comms_config_content = {
         "WifiName": wifi_name,
