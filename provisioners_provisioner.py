@@ -178,8 +178,8 @@ class flowmeter_provision:
         got_actor_name = False
         while not got_actor_name:
             self.actor_name = input("Enter Actor name (e.g. 'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
-            if 'flow' not in self.actor_name:
-                print("please include 'flow' in the actor name")
+            if self.actor_name not in {'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'}:
+                print("Invalid actor name")
             else:
                 got_actor_name = True
         
@@ -188,7 +188,7 @@ class flowmeter_provision:
         while not got_flow_name:
             self.flow_name = input(f"Enter Flow name ('primary-flow', 'dist-flow', 'store-flow'): ")
             if self.flow_name not in {'primary-flow', 'dist-flow', 'store-flow'}:
-                print("invalid flow name")
+                print("Invalid flow name")
             else:
                 got_flow_name = True
 
