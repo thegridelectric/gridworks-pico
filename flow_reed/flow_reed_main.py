@@ -150,8 +150,8 @@ class PicoFlowReed:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
-                self.publish_ticklist_length = updated_config.get("PublishTicklistLength", self.publish_ticklist_length),
-                self.publish_any_ticklist_after_s = updated_config.get("PublishAnyTicklistAfterS", self.publish_any_ticklist_after_s),
+                self.publish_ticklist_length = updated_config.get("PublishTicklistLength", self.publish_ticklist_length)
+                self.publish_any_ticklist_after_s = updated_config.get("PublishAnyTicklistAfterS", self.publish_any_ticklist_after_s)
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
                 self.save_app_config()
             response.close()
