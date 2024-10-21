@@ -19,12 +19,12 @@ APP_CONFIG_FILE = "app_config.json"
 # Default parameters
 DEFAULT_ACTOR_NAME = "pico-flow-reed"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
+DEFAULT_PUBLISH_TICKLIST_LENGTH = 10
+DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S = 180
 DEFAULT_DEADBAND_MILLISECONDS = 10
 
 # Other constants
 PULSE_PIN = 28 # 7 pins down on the hot side
-TIME_WEIGHTING_MS = 800
-POST_LIST_LENGTH = 10
 
 # Available pin states
 class PinState:
@@ -50,11 +50,12 @@ class PicoFlowReed:
         self.load_comms_config()
         self.load_app_config()
         # Reporting relative ticklists
-        self.first_tick_ms = None
         self.relative_ms_list = []
-        self.posting_ticklist = False
-        # Sync time with Pi
-        self.capture_offset_seconds = 0
+        self.first_tick_ms = None
+        self.time_at_first_tick_ns = None
+        # Posting ticklists
+        self.last_ticks_sent = utime.time()
+        self.actively_publishing_ticklist = False
 
     def state_init(self):
         in_down_state = False
@@ -114,12 +115,16 @@ class PicoFlowReed:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.flow_node_name = app_config.get("FlowNodeName", DEFAULT_FLOW_NODE_NAME)
+        self.publish_ticklist_length = app_config.get("PublishTicklistLength", DEFAULT_PUBLISH_TICKLIST_LENGTH)
+        self.publish_any_ticklist_after_s = app_config.get("PublishAnyTicklistAfterS", DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S)
         self.deadband_milliseconds = app_config.get("DeadbandMilliseconds", DEFAULT_DEADBAND_MILLISECONDS)
 
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
+            "PublishTicklistLength": self.publish_ticklist_length,
+            "PublishAnyTicklistAfterS": self.publish_any_ticklist_after_s,
             "DeadbandMilliseconds": self.deadband_milliseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
@@ -131,6 +136,8 @@ class PicoFlowReed:
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowNodeName": self.flow_node_name,
+            "PublishTicklistLength": self.publish_ticklist_length,
+            "PublishAnyTicklistAfterS": self.publish_any_ticklist_after_s,
             "DeadbandMilliseconds": self.deadband_milliseconds,
             "TypeName": "flow.reed.params",
             "Version": "101"
@@ -143,8 +150,9 @@ class PicoFlowReed:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
                 self.flow_node_name = updated_config.get("FlowNodeName", self.flow_node_name)
+                self.publish_ticklist_length = updated_config.get("PublishTicklistLength", self.publish_ticklist_length),
+                self.publish_any_ticklist_after_s = updated_config.get("PublishAnyTicklistAfterS", self.publish_any_ticklist_after_s),
                 self.deadband_milliseconds = updated_config.get("DeadbandMilliseconds", self.deadband_milliseconds)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -184,8 +192,6 @@ class PicoFlowReed:
     # ---------------------------------
     
     def post_ticklist(self):
-        if self.first_tick_ms is None:
-            return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "HwUid": self.hw_uid,
@@ -205,6 +211,7 @@ class PicoFlowReed:
         gc.collect()
         self.relative_ms_list = []
         self.first_tick_ms = None
+        self.time_at_first_tick_ns = None
 
     # ---------------------------------
     # Receive and publish ticks
@@ -218,11 +225,14 @@ class PicoFlowReed:
 
         while(True):  
 
-            # Publish the list of relative ticks when it reaches a certain length
-            if len(self.relative_ms_list) >= POST_LIST_LENGTH and not (self.posting_ticklist):
-                self.posting_ticklist = True
-                self.post_ticklist()
-                self.posting_ticklist = False
+            # Publish ticklist when it reaches a certain length, or after some time
+            if (len(self.relative_ms_list) >= self.publish_ticklist_length or
+                utime.time() - self.last_ticks_sent > self.publish_any_ticklist_after_s):
+                if not self.actively_publishing_ticklist:
+                    self.actively_publishing_ticklist = True
+                    self.post_ticklist()
+                    self.last_ticks_sent = utime.time()
+                    self.actively_publishing_ticklist = False
 
             # States: down -> going up -> up -> going down -> down
             current_reading = self.pulse_pin.value()
