@@ -188,8 +188,8 @@ class PicoFlowReed:
             return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
-            "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestampNanoSecond": self.time_at_first_tick_ns,
+            "HwUid": self.hw_uid,
+            "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMillisecondList": self.relative_ms_list, 
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "TypeName": "ticklist.reed", 

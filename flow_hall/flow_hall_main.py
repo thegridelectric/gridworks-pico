@@ -8,8 +8,6 @@ import time
 import gc
 import os
 
-ABSOLUTE = False
-
 # ---------------------------------
 # Constants
 # ---------------------------------
@@ -179,28 +177,21 @@ class PicoFlowHall:
         '''Compute the relative timestamp and add it to a list'''
         if not self.actively_publishing:
             current_timestamp_us = utime.ticks_us()
-            if ABSOLUTE:
-                self.relative_us_list.append(current_timestamp_us)
+            # Initialize the timestamp if this is the first pulse
+            if self.first_tick_us is None:
+                self.first_tick_us = current_timestamp_us
+                self.time_at_first_tick_ns = utime.time_ns()
+                self.relative_us_list.append(0)
             else:
-                # Initialize the timestamp if this is the first pulse
-                if self.first_tick_us is None:
-                    self.first_tick_us = current_timestamp_us
-                    self.time_at_first_tick_ns = utime.time_ns()
-                    self.relative_us_list.append(0)
-                else:
-                    relative_us = current_timestamp_us - self.first_tick_us
-                    # if relative_us - self.relative_us_list[-1] > 1e3:
+                relative_us = current_timestamp_us - self.first_tick_us
+                if relative_us - self.relative_us_list[-1] > 1e3:
                     self.relative_us_list.append(relative_us)
 
     def post_ticklist(self):
         url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
-        if ABSOLUTE:
-            time_at_first_tick = 0
-            if len(self.relative_us_list) > 0:
-                time_at_first_tick = self.relative_us_list[0]
         payload = {
-            "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestampNanoSecond": time_at_first_tick if ABSOLUTE else self.time_at_first_tick_ns,
+            "HwUid": self.hw_uid,
+            "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMicrosecondList": self.relative_us_list,
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "TypeName": "ticklist.hall", 
