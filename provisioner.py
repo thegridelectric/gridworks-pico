@@ -1041,6 +1041,8 @@ elif 'main_revert.py' in os.listdir():
                 break
 
     print(f"Connected to wifi '{wifi_name}'.\n")
+    wifi_name = 'gridworks'
+    wifi_pass = input('Enter the wifi password for gridworks: ')
 
     # Connect to API
 
@@ -1088,6 +1090,9 @@ elif 'main_revert.py' in os.listdir():
     print(f"Connected to the API hosted in '{base_url}'.")
 
     # Write the parameters to comms_config.json
+
+    new_hostname = input('True hostname: ')
+    base_url = f"http://{new_hostname}:8000"
 
     comms_config_content = {
         "WifiName": wifi_name,
