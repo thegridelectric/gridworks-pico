@@ -1098,7 +1098,8 @@ elif 'main_revert.py' in os.listdir():
 
     # Write the parameters to comms_config.json
 
-    base_url = input('Enter the TRUE base URL: ')
+    hostname = input('Enter the TRUE hostname: ')
+    base_url = f"http://{hostname}.local:8000"
     wifi_name = 'GridWorks'
     wifi_pass = input('Enter the TRUE password (for GridWorks wifi): ')
 
