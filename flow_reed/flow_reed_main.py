@@ -51,7 +51,6 @@ class PicoFlowReed:
         self.load_app_config()
         # Reporting relative ticklists
         self.first_tick_ms = None
-        self.time_at_first_tick_ns = None
         self.relative_ms_list = []
         self.posting_ticklist = False
         # Sync time with Pi
@@ -190,9 +189,9 @@ class PicoFlowReed:
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
             "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestamp": self.time_at_first_tick_ns,
+            "FirsTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMillisecondList": self.relative_ms_list, 
-            "PicoTimeBeforePost": utime.time_ns(),
+            "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "TypeName": "ticklist.reed", 
             "Version": "101"
         }
