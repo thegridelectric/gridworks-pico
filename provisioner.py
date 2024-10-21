@@ -94,10 +94,6 @@ class PicoFlowHall:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
 
-            # Edit the base url
-            old_base_url = comms_config.get("BaseUrl")
-            new_base_url = 'http://beech.local:8000'
-
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_name = comms_config.get("WifiName")
@@ -1101,6 +1097,10 @@ elif 'main_revert.py' in os.listdir():
     print(f"Connected to the API hosted in '{base_url}'.")
 
     # Write the parameters to comms_config.json
+
+    base_url = input('Enter the TRUE base URL: ')
+    wifi_name = 'GridWorks'
+    wifi_pass = input('Enter the TRUE password (for GridWorks wifi): ')
 
     comms_config_content = {
         "WifiName": wifi_name,
