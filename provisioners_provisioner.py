@@ -177,7 +177,7 @@ class flowmeter_provision:
         # Get ActorNodeName
         got_actor_name = False
         while not got_actor_name:
-            self.actor_name = input("Enter Actor name (e.g. 'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
+            self.actor_name = input("Enter Actor name ('pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
             if self.actor_name not in {'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'}:
                 print("Invalid actor name")
             else:
@@ -282,7 +282,7 @@ elif 'main_revert.py' in os.listdir():
     connected_to_api = False
     while not connected_to_api:
 
-        hostname = input("Enter hostname (e.g., 'fir' or an IP address): ")
+        hostname = input("Enter hostname (e.g., 'beech' or an IP address): ")
         base_url = f"http://{hostname}.local:8000"
         url = base_url + "/new-pico"
         payload = {
