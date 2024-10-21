@@ -79,7 +79,6 @@ class PicoFlowHall:
         self.load_app_config()
         # Creating relative ticklists
         self.first_tick_us = None
-        self.time_at_first_tick_ns = None
         self.relative_us_list = []
         # Posting ticklists
         self.last_ticks_sent = utime.time()
@@ -226,10 +225,10 @@ class PicoFlowHall:
     def post_ticklist(self):
         url = self.base_url + f"/{self.actor_node_name}/ticklist-hall"
         payload = {
-            "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestamp": self.time_at_first_tick_ns,
+            "HwUid": self.hw_uid,
+            "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMicrosecondList": self.relative_us_list,
-            "PicoTimeBeforePost": utime.time_ns(),
+            "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "TypeName": "ticklist.hall", 
             "Version": "101"
             }
@@ -325,7 +324,6 @@ class PicoFlowReed:
         self.load_app_config()
         # Reporting relative ticklists
         self.first_tick_ms = None
-        self.time_at_first_tick_ns = None
         self.relative_ms_list = []
         self.posting_ticklist = False
         # Sync time with Pi
@@ -463,10 +461,10 @@ class PicoFlowReed:
             return
         url = self.base_url + f"/{self.actor_node_name}/ticklist-reed"
         payload = {
-            "FlowNodeName": self.flow_node_name,
-            "FirsTickTimestamp": self.time_at_first_tick_ns,
+            "HwUid": self.hw_uid,
+            "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMillisecondList": self.relative_ms_list, 
-            "PicoTimeBeforePost": utime.time_ns(),
+            "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "TypeName": "ticklist.reed", 
             "Version": "101"
         }
