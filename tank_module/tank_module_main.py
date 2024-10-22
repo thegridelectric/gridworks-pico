@@ -80,6 +80,28 @@ class TankModule:
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
+
+            # If still on oak2.local, write 'false'
+            if 'has_new_host.txt' not in os.listdir():
+                with open('has_new_host.txt', 'w') as f:
+                    f.write('False')
+
+            # Check if it says True of False
+            with open('has_new_host.txt', 'r') as f:
+                content = f.read().strip()
+                has_new_host = content == 'True'
+
+            # If it says False, then update to oak.local
+            if not has_new_host:
+                # Edit the base URL and save to comms_config
+                comms_config["BaseUrl"] = 'http://oak.local:8000'
+
+                with open('has_new_host.txt', 'w') as f:
+                    f.write('True')
+
+                with open(COMMS_CONFIG_FILE, "w") as f:
+                    ujson.dump(comms_config, f)
+                    
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_name = comms_config.get("WifiName")
