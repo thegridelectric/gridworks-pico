@@ -58,11 +58,6 @@ class PicoFlowHall:
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
-
-            # Edit the base url
-            old_base_url = comms_config.get("BaseUrl")
-            new_base_url = 'http://beech.local:8000'
-
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_name = comms_config.get("WifiName")
