@@ -93,7 +93,6 @@ class PicoFlowHall:
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
-            
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_name = comms_config.get("WifiName")
@@ -441,7 +440,7 @@ class PicoFlowReed:
     def update_code(self):
         url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
-            "HwUid": self.base_url,
+            "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
             "Version": "100"
