@@ -1,4 +1,3 @@
-# commit b3102fb8: Oct 23, JM. CaptureS works. Also report on boot.
 import machine
 import utime
 import network
@@ -287,8 +286,8 @@ class TankModule:
         self.mv1 = self.adc1_micros()
         self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
-        self.main_loop()
         self.start_sync_report_timer()
+        self.main_loop()
 
 if __name__ == "__main__":
     t = TankModule()
