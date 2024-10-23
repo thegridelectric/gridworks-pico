@@ -282,10 +282,12 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
+        self.mv0 = self.adc0_micros()
+        self.mv1 = self.adc1_micros()
         self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
-        self.start_sync_report_timer()
         self.main_loop()
+        self.start_sync_report_timer()
 
 if __name__ == "__main__":
     t = TankModule()
