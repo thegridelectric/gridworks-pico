@@ -284,6 +284,7 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
+        self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
         self.start_keepalive_timer()
         self.main_loop()
