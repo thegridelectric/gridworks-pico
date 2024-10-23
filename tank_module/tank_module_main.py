@@ -53,7 +53,7 @@ class TankModule:
         self.microvolts_posted_time = utime.time()
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
-        self.keepalive_timer = machine.Timer(-1)
+        self.sync_report_timer = machine.Timer(-1)
 
     def set_names(self):
         if self.actor_node_name is None:
@@ -252,17 +252,13 @@ class TankModule:
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
-    def keep_alive(self, timer):
-        '''Post microvolts if none were posted within the last minute'''
-        if utime.time() - self.microvolts_posted_time > 55:
-            self.post_microvolts()
     
-    def start_keepalive_timer(self):
+    def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
-        self.keepalive_timer.init(
+        self.sync_report_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.keep_alive
+            callback=self.post_microvolts
         )
 
     def main_loop(self):
@@ -286,7 +282,7 @@ class TankModule:
         self.set_names()
         self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
-        self.start_keepalive_timer()
+        self.start_sync_report_timer()
         self.main_loop()
 
 if __name__ == "__main__":
