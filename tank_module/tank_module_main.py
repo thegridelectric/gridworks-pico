@@ -252,13 +252,15 @@ class TankModule:
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
-    
+    def sync_report(self, timer):
+        self.post_microvolts()
+
     def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
         self.sync_report_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.post_microvolts
+            callback=self.sync_report
         )
 
     def main_loop(self):
