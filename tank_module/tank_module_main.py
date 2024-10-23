@@ -1,3 +1,4 @@
+# commit b3102fb8: Oct 23, JM. CaptureS works. Also report on boot.
 import machine
 import utime
 import network
