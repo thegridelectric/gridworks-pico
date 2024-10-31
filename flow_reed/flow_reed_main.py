@@ -66,6 +66,13 @@ class PicoFlowReed:
             reading = self.pulse_pin.value()
             if prev_reading == 0 and reading == 0:
                 in_down_state = True
+            # Publish empty ticklists in the meantime
+            if utime.time() - self.last_ticks_sent > self.publish_any_ticklist_after_s:
+                if not self.actively_publishing_ticklist:
+                    self.actively_publishing_ticklist = True
+                    self.post_ticklist()
+                    self.last_ticks_sent = utime.time()
+                    self.actively_publishing_ticklist = False
         self.pin_state = PinState.DOWN
 
     # ---------------------------------
