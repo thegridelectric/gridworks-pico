@@ -52,7 +52,7 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
-DEFAULT_ACTOR_NAME = "pico-flow-hall"
+DEFAULT_ACTOR_NAME = "primary-flow"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_PUBLISH_TICKLIST_PERIOD_S = 10
 DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S = 60
@@ -288,8 +288,8 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
-DEFAULT_ACTOR_NAME = "pico-flow-reed"
-DEFAULT_FLOW_NODE_NAME = "primary-flow"
+DEFAULT_ACTOR_NAME = "dist-flow"
+DEFAULT_FLOW_NODE_NAME = "dist-flow"
 DEFAULT_PUBLISH_TICKLIST_LENGTH = 10
 DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S = 180
 DEFAULT_DEADBAND_MILLISECONDS = 10
@@ -953,25 +953,16 @@ class flowmeter_provision:
         # Get ActorNodeName
         got_actor_name = False
         while not got_actor_name:
-            self.actor_name = input("Enter Actor name ('pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
-            if self.actor_name not in {'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'}:
+            self.actor_name = input("Enter Actor name ('dist-flow', 'store-flow', 'primary-flow): ")
+            if self.actor_name not in {'dist-flow', 'store-flow', 'primary-flow'}:
                 print("Invalid actor name")
             else:
                 got_actor_name = True
         
-        # Get FlowNodeName
-        got_flow_name = False
-        while not got_flow_name:
-            self.flow_name = input(f"Enter Flow name ('primary-flow', 'dist-flow', 'store-flow'): ")
-            if self.flow_name not in {'primary-flow', 'dist-flow', 'store-flow'}:
-                print("Invalid flow name")
-            else:
-                got_flow_name = True
-
         # Save in app_config.json
         config = {
             "ActorNodeName": self.actor_name,
-            "FlowNodeName": self.flow_name,
+            "FlowNodeName": self.actor_name,
         }
         with open("app_config.json", "w") as f:
             ujson.dump(config, f)
@@ -1128,6 +1119,19 @@ elif 'main_revert.py' in os.listdir():
     elif type == '1':
         p = flowmeter_provision()
         p.start()
+    
+        got_subtype = False
+        while not got_subtype:
+            subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
+            if subtype not in {'0','1'}:
+                print('Please enter 0 or 1.')
+            else:
+                got_subtype = True
+        if subtype == '0':
+            flow_type = "Hall"
+        else:
+            flow_type = "Reed"
+
 
     print(f"\n{'-'*40}\n[3/4] Success! Wrote 'app_config.json' on the Pico.\n{'-'*40}\n")
 
@@ -1140,11 +1144,11 @@ elif 'main_revert.py' in os.listdir():
         config_content = ujson.load(file)
     name = config_content['ActorNodeName']
 
-    if 'flow' in name:
-        if 'hall' in name:
+    if type == '1':
+        if flow_type == "Hall":
             print("This is a hall meter.")
             write_flow_hall_main()
-        if 'reed' in name:
+        else:
             print("This is a reed meter.")
             write_flow_reed_main()
     else:
