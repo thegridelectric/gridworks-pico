@@ -1139,7 +1139,6 @@ elif 'main_revert.py' in os.listdir():
         else:
             flow_type = "Reed"
 
-
     print(f"\n{'-'*40}\n[3/4] Success! Wrote 'app_config.json' on the Pico.\n{'-'*40}\n")
 
     # -------------------------

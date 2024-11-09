@@ -343,7 +343,7 @@ elif 'main_revert.py' in os.listdir():
     elif type == '1':
         p = flowmeter_provision()
         p.start()
-
+    
         got_subtype = False
         while not got_subtype:
             subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
