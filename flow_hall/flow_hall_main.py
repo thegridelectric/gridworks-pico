@@ -17,7 +17,7 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
-DEFAULT_ACTOR_NAME = "pico-flow-hall"
+DEFAULT_ACTOR_NAME = "primary-flow"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_PUBLISH_TICKLIST_PERIOD_S = 10
 DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S = 60
