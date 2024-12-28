@@ -136,10 +136,6 @@ class PicoFlowHall:
             response.close()
         except Exception as e:
             print(f"Error posting flow.hall.params: {e}")
-            if 'main_previous.py' in os.listdir():
-                print("Reverting to previous code.")
-                os.rename('main_previous.py', 'main_revert.py')
-                machine.reset()
 
     # ---------------------------------
     # Code updates
