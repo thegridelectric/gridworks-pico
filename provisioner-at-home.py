@@ -1042,9 +1042,9 @@ elif 'main_revert.py' in os.listdir():
 
     connected_to_api = False
     while not connected_to_api:
-
-        # hostname = input("Enter hostname (e.g., 'fir2' or an IP address): ")
-        hostname = '192.168.0.155'
+        
+        #hostname = input("Enter hostname (e.g., 'fir2' or an IP address): ")
+        hostname = '192.168.1.100'
         base_url = f"http://{hostname}.local:8000"
         url = base_url + "/new-pico"
         payload = {
@@ -1086,7 +1086,7 @@ elif 'main_revert.py' in os.listdir():
 
     # Write the parameters to comms_config.json
 
-    hostname = input('Enter the HOUSE ALIAS (e.g. oak, beech, etc.): ')
+    hostname = 'maple' #input('Enter the HOUSE ALIAS (e.g. oak, beech, etc.): ')
     base_url = f"http://{hostname}.local:8000"
     wifi_name = 'GridWorks'
     wifi_pass = input('Enter the password FOR GRIDWORKS WIFI: ')
