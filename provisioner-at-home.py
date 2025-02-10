@@ -52,7 +52,7 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
-DEFAULT_ACTOR_NAME = "pico-flow-hall"
+DEFAULT_ACTOR_NAME = "primary-flow"
 DEFAULT_FLOW_NODE_NAME = "primary-flow"
 DEFAULT_PUBLISH_TICKLIST_PERIOD_S = 10
 DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S = 60
@@ -284,8 +284,8 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
-DEFAULT_ACTOR_NAME = "pico-flow-reed"
-DEFAULT_FLOW_NODE_NAME = "primary-flow"
+DEFAULT_ACTOR_NAME = "dist-flow"
+DEFAULT_FLOW_NODE_NAME = "dist-flow"
 DEFAULT_PUBLISH_TICKLIST_LENGTH = 10
 DEFAULT_PUBLISH_ANY_TICKLIST_AFTER_S = 180
 DEFAULT_DEADBAND_MILLISECONDS = 10
@@ -333,6 +333,13 @@ class PicoFlowReed:
             reading = self.pulse_pin.value()
             if prev_reading == 0 and reading == 0:
                 in_down_state = True
+            # Publish empty ticklists in the meantime
+            if utime.time() - self.last_ticks_sent > self.publish_any_ticklist_after_s:
+                if not self.actively_publishing_ticklist:
+                    self.actively_publishing_ticklist = True
+                    self.post_ticklist()
+                    self.last_ticks_sent = utime.time()
+                    self.actively_publishing_ticklist = False
         self.pin_state = PinState.DOWN
 
     # ---------------------------------
@@ -610,7 +617,7 @@ class TankModule:
         self.microvolts_posted_time = utime.time()
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
-        self.keepalive_timer = machine.Timer(-1)
+        self.sync_report_timer = machine.Timer(-1)
 
     def set_names(self):
         if self.actor_node_name is None:
@@ -805,17 +812,15 @@ class TankModule:
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
-    def keep_alive(self, timer):
-        '''Post microvolts if none were posted within the last minute'''
-        if utime.time() - self.microvolts_posted_time > 55:
-            self.post_microvolts()
-    
-    def start_keepalive_timer(self):
+    def sync_report(self, timer):
+        self.post_microvolts()
+
+    def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
-        self.keepalive_timer.init(
+        self.sync_report_timer.init(
             period=self.capture_period_s * 1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.keep_alive
+            callback=self.sync_report
         )
 
     def main_loop(self):
@@ -837,8 +842,11 @@ class TankModule:
         self.update_code()
         self.update_app_config()
         self.set_names()
+        self.mv0 = self.adc0_micros()
+        self.mv1 = self.adc1_micros()
+        self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
-        self.start_keepalive_timer()
+        self.start_sync_report_timer()
         self.main_loop()
 
 if __name__ == "__main__":
@@ -940,25 +948,16 @@ class flowmeter_provision:
         # Get ActorNodeName
         got_actor_name = False
         while not got_actor_name:
-            self.actor_name = input("Enter Actor name ('pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'): ")
-            if self.actor_name not in {'pico-flow-reed', 'pico-flow-hall', 'pico-flow-hall-store'}:
+            self.actor_name = input("Enter Actor name ('dist-flow', 'store-flow', 'primary-flow): ")
+            if self.actor_name not in {'dist-flow', 'store-flow', 'primary-flow'}:
                 print("Invalid actor name")
             else:
                 got_actor_name = True
         
-        # Get FlowNodeName
-        got_flow_name = False
-        while not got_flow_name:
-            self.flow_name = input(f"Enter Flow name ('primary-flow', 'dist-flow', 'store-flow'): ")
-            if self.flow_name not in {'primary-flow', 'dist-flow', 'store-flow'}:
-                print("Invalid flow name")
-            else:
-                got_flow_name = True
-
         # Save in app_config.json
         config = {
             "ActorNodeName": self.actor_name,
-            "FlowNodeName": self.flow_name,
+            "FlowNodeName": self.actor_name,
         }
         with open("app_config.json", "w") as f:
             ujson.dump(config, f)
@@ -1022,7 +1021,9 @@ elif 'main_revert.py' in os.listdir():
     
     while not wlan.isconnected():
 
-        wifi_name = input("Enter wifi name: ")
+        wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
+        if wifi_name == "":
+            wifi_name = "GridWorks"
         wifi_pass = input("Enter wifi password: ")
 
         time_waiting_connection = 0
@@ -1089,7 +1090,7 @@ elif 'main_revert.py' in os.listdir():
     hostname = 'maple' #input('Enter the HOUSE ALIAS (e.g. oak, beech, etc.): ')
     base_url = f"http://{hostname}.local:8000"
     wifi_name = 'GridWorks'
-    wifi_pass = input('Enter the password FOR GRIDWORKS WIFI: ')
+    # wifi_pass = input('Enter the password FOR GRIDWORKS WIFI: ')
 
     comms_config_content = {
         "WifiName": wifi_name,
@@ -1119,6 +1120,18 @@ elif 'main_revert.py' in os.listdir():
     elif type == '1':
         p = flowmeter_provision()
         p.start()
+    
+        got_subtype = False
+        while not got_subtype:
+            subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
+            if subtype not in {'0','1'}:
+                print('Please enter 0 or 1.')
+            else:
+                got_subtype = True
+        if subtype == '0':
+            flow_type = "Hall"
+        else:
+            flow_type = "Reed"
 
     print(f"\n{'-'*40}\n[3/4] Success! Wrote 'app_config.json' on the Pico.\n{'-'*40}\n")
 
@@ -1131,11 +1144,11 @@ elif 'main_revert.py' in os.listdir():
         config_content = ujson.load(file)
     name = config_content['ActorNodeName']
 
-    if 'flow' in name:
-        if 'hall' in name:
+    if type == '1':
+        if flow_type == "Hall":
             print("This is a hall meter.")
             write_flow_hall_main()
-        if 'reed' in name:
+        else:
             print("This is a reed meter.")
             write_flow_reed_main()
     else:
