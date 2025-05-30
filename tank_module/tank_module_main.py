@@ -17,6 +17,7 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
 # Home Assistant
+# Generate your “Long-lived access token” on Home Assistant, Profile -> Security page
 HA_API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIzZDFhODJjOTU4NTc0ZTI3OTkxZmI5ZjYzNDI4MGJiYiIsImlhdCI6MTc0ODUxOTc5NywiZXhwIjoyMDYzODc5Nzk3fQ.wMGCZgf4qfURtRjaAMgbzOcSzBjSJaIG3a46P8_DRjY"
 
 # Default parameters
