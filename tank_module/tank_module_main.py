@@ -139,7 +139,7 @@ class TankModule:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
+        url = self.base_url + f"/{self.actor_node_name}-tank-module-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -174,7 +174,7 @@ class TankModule:
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + f"/{self.actor_node_name}/code-update"
+        url = self.base_url + f"/{self.actor_node_name}-code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -227,7 +227,7 @@ class TankModule:
     # ---------------------------------
 
     def post_microvolts(self, idx=2):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
+        url = self.base_url + f"/{self.actor_node_name}-microvolts"
         if idx==0:
             mv_list = [self.mv0]
         elif idx==1:
