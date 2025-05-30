@@ -16,6 +16,9 @@ import os
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
+# Home Assistant
+HA_API_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIzZDFhODJjOTU4NTc0ZTI3OTkxZmI5ZjYzNDI4MGJiYiIsImlhdCI6MTc0ODUxOTc5NywiZXhwIjoyMDYzODc5Nzk3fQ.wMGCZgf4qfURtRjaAMgbzOcSzBjSJaIG3a46P8_DRjY"
+
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
 DEFAULT_PICO_AB = "a"
@@ -148,7 +151,7 @@ class TankModule:
             "TypeName": "tank.module.params",
             "Version": "100"
         }
-        headers = {"Content-Type": "application/json"}
+        headers = {'Content-Type': 'application/json', "Authorization": f"Bearer {HA_API_TOKEN}",}
         json_payload = ujson.dumps(payload)
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
@@ -179,7 +182,7 @@ class TankModule:
             "Version": "100"
         }
         json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
+        headers = {'Content-Type': 'application/json', "Authorization": f"Bearer {HA_API_TOKEN}",}
         response = urequests.post(url, data=json_payload, headers=headers)
         if response.status_code == 200:
             # If there is a pending code update then the response is a python file, otherwise json
@@ -238,7 +241,7 @@ class TankModule:
             "TypeName": "microvolts", 
             "Version": "100"
         }
-        headers = {'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json', "Authorization": f"Bearer {HA_API_TOKEN}",}
         json_payload = ujson.dumps(payload)
         try:
             response = urequests.post(url, data=json_payload, headers=headers)
@@ -275,7 +278,7 @@ class TankModule:
 
     def start(self):
         self.connect_to_wifi()
-        self.update_code()
+        # self.update_code()
         self.update_app_config()
         self.set_names()
         self.mv0 = self.adc0_micros()
