@@ -38,7 +38,7 @@ class BtuMeter:
         self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.relative_us_list = []
         self.first_tick_us = None
-        self.time_at_first_tick_ns = None
+        self.time_at_first_tick_ns = utime.time_ns()
         self.last_ticks_sent = utime.time()
         self.last_empty_ticks_sent = utime.time()
         self.actively_publishing_ticklist = False
@@ -46,12 +46,15 @@ class BtuMeter:
         # TEMP
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        self.mv0_list = []
+        self.mv1_list = []
+        self.mv0_timestamp_list = []
+        self.mv1_timestamp_list = []
         self.prev_mv0 = -1
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
         self.node_names = ["ewt", "lwt"]
-        self.microvolts_posted_time = utime.time()
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
 
@@ -182,15 +185,18 @@ class BtuMeter:
                 if relative_us - self.relative_us_list[-1] > 1e3:
                     self.relative_us_list.append(relative_us)
 
-    def post_ticklist(self):
-        url = self.base_url + f"/{self.actor_node_name}/btu-ticklist"
+    def post_btu_data(self):
+        url = self.base_url + f"/{self.actor_node_name}/btu-data"
         payload = {
             "HwUid": self.hw_uid,
             "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
             "RelativeMicrosecondList": self.relative_us_list,
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
-            "TypeName": "ticklist.hall", 
-            "Version": "101"
+            "AboutNodeNameList": self.node_names,
+            "MicroVoltsLists": [self.mv0_list, self.mv1_list],
+            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list],
+            "TypeName": "btu.data", 
+            "Version": "100"
             }
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
@@ -202,7 +208,10 @@ class BtuMeter:
         gc.collect()
         self.relative_us_list = []
         self.first_tick_us = None
-        self.time_at_first_tick_ns = None
+        self.mv0_list = []
+        self.mv1_list = []
+        self.mv0_timestamp_list = []
+        self.mv1_timestamp_list = []
 
     # ---------------------------------
     # Measuring and posting microvolts
@@ -232,33 +241,22 @@ class BtuMeter:
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
 
-    def post_microvolts(self, idx=2):
-        url = self.base_url + f"/{self.actor_node_name}/btu-microvolts"
+    def save_microvolts(self, idx=2):
+        time_ns = utime.time_ns()
         if idx==0:
-            mv_list = [self.mv0]
+            self.mv0_list.append(self.mv0)
+            self.mv0_timestamp_list.append(time_ns)
         elif idx==1:
-            mv_list = [self.mv1]
+            self.mv1_list.append(self.mv1)
+            self.mv1_timestamp_list.append(time_ns)
         else:
-            mv_list = [self.mv0, self.mv1]
-        payload = {
-            "HwUid": self.hw_uid,
-            "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
-            "MicroVoltsList": mv_list, 
-            "TypeName": "microvolts", 
-            "Version": "100"
-        }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting microvolts: {e}")
-        gc.collect()
-        self.microvolts_posted_time = utime.time()
+            self.mv0_list.append(self.mv0)
+            self.mv1_list.append(self.mv1)
+            self.mv0_timestamp_list.append(time_ns)
+            self.mv1_timestamp_list.append(time_ns)
         
     def sync_report(self, timer):
-        self.post_microvolts()
+        self.post_btu_data()
 
     def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
@@ -271,21 +269,21 @@ class BtuMeter:
     def main_loop(self):
         while True:
             utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
-            # TEMP on change
+            # Save TEMP on change
             self.mv0 = self.adc0_micros()
             self.mv1 = self.adc1_micros()
             if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
-                self.post_microvolts(idx=0)
+                self.save_microvolts(idx=0)
                 self.prev_mv0 = self.mv0
             if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
-                self.post_microvolts(idx=1)
+                self.save_microvolts(idx=1)
                 self.prev_mv1 = self.mv1
-            # FLOW periodically
+            # Post FLOW and TEMP periodically
             if ((self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_ticklist_period_s) 
                 or 
                 (not self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_empty_ticklist_after_s)):
                 self.actively_publishing_ticklist = True
-                self.post_ticklist()
+                self.post_btu_data()
                 self.last_ticks_sent = utime.time()
                 self.actively_publishing_ticklist = False
 
@@ -297,7 +295,7 @@ class BtuMeter:
         # TEMP
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
-        self.post_microvolts()
+        self.save_microvolts()
         # utime.sleep(self.capture_offset_seconds)
         self.start_sync_report_timer()
         self.main_loop()
