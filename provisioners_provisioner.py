@@ -8,6 +8,8 @@ with open('flow_reed/flow_reed_main.py', 'r') as file:
     flow_reed_main = file.read()
 with open('tank_module/tank_module_main.py', 'r') as file:
     tank_module_main = file.read()
+with open('btu_meter/btu_main.py', 'r') as file:
+    btu_meter_main = file.read()
 
 # ----------------------------------------------------
 # 1 - Beginning of provisioner and beginning of hall main
@@ -77,10 +79,23 @@ def write_tank_module_main():
 """
 
 # ----------------------------------------------------
-# 1 - End of tank main, end of provisioner
+# 4 - End of tank main, beggining of btu main
 # ----------------------------------------------------
 
 step4 = """
+    \"\"\"
+    with open('main.py', 'w') as file:
+        file.write(main_code)
+
+def write_btu_meter_main():
+    main_code = \"\"\"
+"""
+
+# ----------------------------------------------------
+# 5 - End of btu main, end of provisioner
+# ----------------------------------------------------
+
+step5 = """
     \"\"\"
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -187,6 +202,30 @@ class flowmeter_provision:
         config = {
             "ActorNodeName": self.actor_name,
             "FlowNodeName": self.actor_name,
+        }
+        with open("app_config.json", "w") as f:
+            ujson.dump(config, f)
+            
+    def start(self):
+        self.set_name()
+
+# -------------------------
+# BTU meter
+# -------------------------
+
+class btu_provision:  
+    def set_name(self):
+        got_tank_name = False
+        while not got_tank_name:
+            name = input(f"BTU Name: 'dist-btu', 'store-btu', 'primary-btu', 'sieg-btu': ")
+            self.name = name
+            if name not in {'primary-btu', 'store-btu', 'dist-btu', 'sieg-btu'}:
+                print("Invalid btu name")
+            else:
+                got_tank_name = True
+        self.actor_node_name = name
+        config = {
+            "ActorNodeName": self.actor_node_name,
         }
         with open("app_config.json", "w") as f:
             ujson.dump(config, f)
@@ -331,9 +370,9 @@ elif 'main_revert.py' in os.listdir():
 
     got_type = False
     while not got_type:
-        type = input("Is this Pico associated to a tank module (enter '0') or a flowmeter (enter '1'): ")
-        if type not in {'0','1'}:
-            print('Please enter 0 or 1.')
+        type = input("Is this Pico associated to a tank module (enter '0'), a flowmeter (enter '1'), or a BTU-meter (enter '2'): ")
+        if type not in {'0','1','2'}:
+            print('Please enter 0, 1 or 2.')
         else:
             got_type = True
 
@@ -343,7 +382,6 @@ elif 'main_revert.py' in os.listdir():
     elif type == '1':
         p = flowmeter_provision()
         p.start()
-    
         got_subtype = False
         while not got_subtype:
             subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
@@ -355,6 +393,9 @@ elif 'main_revert.py' in os.listdir():
             flow_type = "Hall"
         else:
             flow_type = "Reed"
+    elif type == '2':
+        p = btu_provision()
+        p.start()
 
     print(f"\\n{'-'*40}\\n[3/4] Success! Wrote 'app_config.json' on the Pico.\\n{'-'*40}\\n")
 
@@ -367,16 +408,21 @@ elif 'main_revert.py' in os.listdir():
         config_content = ujson.load(file)
     name = config_content['ActorNodeName']
 
-    if type == '1':
+    if type=='0':
+        print("This is a tank module.")
+        write_tank_module_main()
+        
+    elif type == '1':
         if flow_type == "Hall":
             print("This is a hall meter.")
             write_flow_hall_main()
         else:
             print("This is a reed meter.")
             write_flow_reed_main()
-    else:
-        print("This is a tank module.")
-        write_tank_module_main()
+    
+    elif type=='2':
+        print("This is a BTU meter.")
+        write_btu_meter_main()
 
     print(f"\\n{'-'*40}\\n[4/4] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
 
@@ -394,3 +440,5 @@ with open('provisioner.py', 'w') as file:
     file.write(step3)
     file.write(tank_module_main)
     file.write(step4)
+    file.write(btu_meter_main)
+    file.write(step5)
