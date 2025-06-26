@@ -10,6 +10,8 @@ with open('tank_module/tank_module_main.py', 'r') as file:
     tank_module_main = file.read()
 with open('btu_meter/btu_main.py', 'r') as file:
     btu_meter_main = file.read()
+with open('tank_module/current_tap_main.py', 'r') as file:
+    current_tap_main = file.read()
 
 # ----------------------------------------------------
 # 1 - Beginning of provisioner and beginning of hall main
@@ -92,10 +94,23 @@ def write_btu_meter_main():
 """
 
 # ----------------------------------------------------
-# 5 - End of btu main, end of provisioner
+# 5 - End of btu main, beggining of current tap
 # ----------------------------------------------------
 
 step5 = """
+    \"\"\"
+    with open('main.py', 'w') as file:
+        file.write(main_code)
+
+def write_current_tap_main():
+    main_code = \"\"\"
+"""
+
+# ----------------------------------------------------
+# 6 - End of current tap main, end of provisioner
+# ----------------------------------------------------
+
+step6 = """
     \"\"\"
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -223,6 +238,28 @@ class btu_provision:
                 print("Invalid btu name")
             else:
                 got_tank_name = True
+        self.actor_node_name = name
+        config = {
+            "ActorNodeName": self.actor_node_name,
+        }
+        with open("app_config.json", "w") as f:
+            ujson.dump(config, f)
+            
+    def start(self):
+        self.set_name()
+
+# -------------------------
+# CurrentTap
+# -------------------------
+
+class current_tap_provision:  
+    def set_name(self):
+        got_ct_name = False
+        while not got_ct_name:
+            name = input(f"CurrentTap Name: ")
+            self.name = name
+            if name:
+                got_ct_name = True
         self.actor_node_name = name
         config = {
             "ActorNodeName": self.actor_node_name,
@@ -370,9 +407,9 @@ elif 'main_revert.py' in os.listdir():
 
     got_type = False
     while not got_type:
-        type = input("Is this Pico associated to a tank module (enter '0'), a flowmeter (enter '1'), or a BTU-meter (enter '2'): ")
-        if type not in {'0','1','2'}:
-            print('Please enter 0, 1 or 2.')
+        type = input("Is this Pico associated to a tank module (enter '0'), a flowmeter (enter '1'), a BTU-meter (enter '2'), a CurrentTap (enter '3'): ")
+        if type not in {'0','1','2','3'}:
+            print('Please enter 0, 1, 2, or 3.')
         else:
             got_type = True
 
@@ -395,6 +432,9 @@ elif 'main_revert.py' in os.listdir():
             flow_type = "Reed"
     elif type == '2':
         p = btu_provision()
+        p.start()
+    elif type == '3':
+        p = current_tap_provision()
         p.start()
 
     print(f"\\n{'-'*40}\\n[3/4] Success! Wrote 'app_config.json' on the Pico.\\n{'-'*40}\\n")
@@ -424,6 +464,10 @@ elif 'main_revert.py' in os.listdir():
         print("This is a BTU meter.")
         write_btu_meter_main()
 
+    elif type=='3':
+        print("This is a CurrentTap.")
+        write_current_tap_main()
+
     print(f"\\n{'-'*40}\\n[4/4] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
 
     print("The Pico is set up. It is now ready to use.")"""
@@ -442,3 +486,5 @@ with open('provisioner.py', 'w') as file:
     file.write(step4)
     file.write(btu_meter_main)
     file.write(step5)
+    file.write(current_tap_main)
+    file.write(step6)
