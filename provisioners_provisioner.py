@@ -389,7 +389,24 @@ elif 'main_revert.py' in os.listdir():
 
     # Connect to ethernet
     elif wifi_or_ethernet == 'e':
-        ...
+        nic = network.WIZNET5K()
+        for attempt in range(3):
+            try:
+                nic.active(True)
+                break
+            except Exception as e:
+                print(f"Retrying NIC activation due to: {e}")
+                utime.sleep(0.5)
+        if not nic.isconnected():
+            print("Connecting to Ethernet...")
+            nic.ifconfig('dhcp')
+            timeout = 10
+            start = utime.time()
+            while not nic.isconnected():
+                if utime.time() - start > timeout:
+                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
+                utime.sleep(0.5)
+        print("Connected to Ethernet")
 
     # Connect to API
 

@@ -84,19 +84,25 @@ class PicoFlowReed:
     # ---------------------------------
                                                             
     def load_comms_config(self):
-        '''Load the communication configuration file (WiFi and API base URL)'''
+        '''Load the communication configuration file (WiFi/Ethernet and API base URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_name = comms_config.get("WifiName")
-        self.wifi_password = comms_config.get("WifiPassword")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_name = comms_config.get("WifiName", None)
+        self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
-        if self.wifi_name is None:
-            raise KeyError("WifiName not found in comms_config.json")
-        if self.wifi_password is None:
-            raise KeyError("WifiPassword not found in comms_config.json")
+        if self.wifi_or_ethernet=='wifi':
+            if self.wifi_name is None:
+                raise KeyError("WifiName not found in comms_config.json")
+            if self.wifi_password is None:
+                raise KeyError("WifiPassword not found in comms_config.json")
+        elif self.wifi_or_ethernet=='ethernet':
+            pass
+        else:
+            raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
         if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
         
@@ -107,8 +113,28 @@ class PicoFlowReed:
             print("Connecting to wifi...")
             wlan.connect(self.wifi_name, self.wifi_password)
             while not wlan.isconnected():
-                time.sleep(1)
+                utime.sleep_ms(500)
         print(f"Connected to wifi {self.wifi_name}")
+
+    def connect_to_ethernet(self):
+        nic = network.WIZNET5K()
+        for attempt in range(3):
+            try:
+                nic.active(True)
+                break
+            except Exception as e:
+                print(f"Retrying NIC activation due to: {e}")
+                utime.sleep(0.5)
+        if not nic.isconnected():
+            print("Connecting to Ethernet...")
+            nic.ifconfig('dhcp')
+            timeout = 10
+            start = utime.time()
+            while not nic.isconnected():
+                if utime.time() - start > timeout:
+                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
+                utime.sleep(0.5)
+        print("Connected to Ethernet")
 
     # ---------------------------------
     # Parameters
@@ -358,7 +384,10 @@ class PicoFlowReed:
                     self.published_0_gpm = True
                 
     def start(self):
-        self.connect_to_wifi()
+        if self.wifi_or_ethernet=='wifi':
+            self.connect_to_wifi()
+        elif self.wifi_or_ethernet=='ethernet':
+            self.connect_to_ethernet()
         self.update_code()
         self.update_app_config()
         utime.sleep(self.capture_offset_seconds)
