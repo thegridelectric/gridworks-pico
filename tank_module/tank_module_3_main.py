@@ -18,7 +18,6 @@ APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
-DEFAULT_PICO_AB = "a"
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
@@ -140,7 +139,7 @@ class TankModule:
         except:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
-        self.pico_a_b = app_config.get("PicoAB", DEFAULT_PICO_AB)
+        self.pico_a_b = None
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
