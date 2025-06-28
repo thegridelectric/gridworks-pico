@@ -8,6 +8,8 @@ with open('flow_reed/flow_reed_main.py', 'r') as file:
     flow_reed_main = file.read()
 with open('tank_module/tank_module_main.py', 'r') as file:
     tank_module_main = file.read()
+with open('tank_module/tank_module_3_main.py', 'r') as file:
+    tank_module_3_main = file.read()
 with open('btu_meter/btu_main.py', 'r') as file:
     btu_meter_main = file.read()
 with open('tank_module/current_tap_main.py', 'r') as file:
@@ -107,10 +109,23 @@ def write_current_tap_main():
 """
 
 # ----------------------------------------------------
-# 6 - End of current tap main, end of provisioner
+# 5 - End of current tap main, beggining of tank module 3
 # ----------------------------------------------------
 
 step6 = """
+    \"\"\"
+    with open('main.py', 'w') as file:
+        file.write(main_code)
+
+def write_tank_module_3_main():
+    main_code = \"\"\"
+"""
+
+# ----------------------------------------------------
+# 6 - End of tank module 3, end of provisioner
+# ----------------------------------------------------
+
+step7 = """
     \"\"\"
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -165,28 +180,52 @@ class tankmodule_provision:
             self.num_recorded += 1
     
     def set_name(self):
-        got_a_or_b = False
-        while not got_a_or_b:
-            a_or_b = input("Tank Module pico a or b? Type 'a' or 'b': ")
-            self.pico_a_b = a_or_b
-            if a_or_b not in {'a', 'b'}:
-                print("please enter a or b!")
+        have_three_layer_pico = False
+        while not have_three_layer_pico:
+            three_layer_pico = input("How many temperatures is this Pico measuring (enter '2' or '3'): ")
+            if three_layer_pico not in {'2','3'}:
+                print("Invalid number of temerpatures")
             else:
-                got_a_or_b = True
-        
-        got_tank_name = False
-        while not got_tank_name:
-            name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
-            self.name = name
-            if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
-                print("bad tank name")
-            else:
-                got_tank_name = True
-        self.actor_node_name = name
-        config = {
-            "ActorNodeName": self.actor_node_name,
-            "PicoAB": self.pico_a_b,
-        }
+                have_three_layer_pico = True
+                three_layer_pico = True if three_layer_pico=='3' else False
+                self.three_layers = three_layer_pico
+
+        if not three_layer_pico:
+            got_a_or_b = False
+            while not got_a_or_b:
+                a_or_b = input("Tank Module pico a or b? Type 'a' or 'b': ")
+                self.pico_a_b = a_or_b
+                if a_or_b not in {'a', 'b'}:
+                    print("please enter a or b!")
+                else:
+                    got_a_or_b = True
+            
+            got_tank_name = False
+            while not got_tank_name:
+                name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
+                self.name = name
+                if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
+                    print("bad tank name")
+                else:
+                    got_tank_name = True
+            self.actor_node_name = name
+            config = {
+                "ActorNodeName": self.actor_node_name,
+                "PicoAB": self.pico_a_b,
+            }
+        else:
+            got_tank_name = False
+            while not got_tank_name:
+                name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
+                self.name = name
+                if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
+                    print("bad tank name")
+                else:
+                    got_tank_name = True
+            self.actor_node_name = name
+            config = {
+                "ActorNodeName": self.actor_node_name,
+            }
         with open("app_config.json", "w") as f:
             ujson.dump(config, f)
             
@@ -315,34 +354,42 @@ elif 'main_revert.py' in os.listdir():
     # Write comms_config.json
     # -------------------------
 
+    have_wifi_or_ethernet = False
+    while not have_wifi_or_ethernet:
+        wifi_or_ethernet = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
+        if wifi_or_ethernet not in {'w','e'}:
+            print("Invalid entry. Please enter either 'w' or 'e'.")
+        else:
+            have_wifi_or_ethernet = True
+    
     # Connect to wifi
-
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    
-    wlan.disconnect()
-    while wlan.isconnected():
-        utime.sleep(0.1)
-    
-    while not wlan.isconnected():
-
-        wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
-        if wifi_name == "":
-            wifi_name = "GridWorks"
-        wifi_pass = input("Enter wifi password: ")
-
-        time_waiting_connection = 0
-        wlan.connect(wifi_name, wifi_pass)
+    if wifi_or_ethernet == 'w':
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
+        wlan.disconnect()
+        while wlan.isconnected():
+            utime.sleep(0.1)
+        
         while not wlan.isconnected():
-            if time_waiting_connection>0 and time_waiting_connection%2==0:
-                print(f"Trying to connect ({int(time_waiting_connection/2)}/5)...")
-            utime.sleep(0.5)
-            time_waiting_connection += 0.5
-            if time_waiting_connection > 10:
-                print("Failed to connect to wifi, please try again.\\n")
-                break
+            wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
+            if wifi_name == "":
+                wifi_name = "GridWorks"
+            wifi_pass = input("Enter wifi password: ")
+            time_waiting_connection = 0
+            wlan.connect(wifi_name, wifi_pass)
+            while not wlan.isconnected():
+                if time_waiting_connection>0 and time_waiting_connection%2==0:
+                    print(f"Trying to connect ({int(time_waiting_connection/2)}/5)...")
+                utime.sleep(0.5)
+                time_waiting_connection += 0.5
+                if time_waiting_connection > 10:
+                    print("Failed to connect to wifi, please try again.\\n")
+                    break
+        print(f"Connected to wifi '{wifi_name}'.\\n")
 
-    print(f"Connected to wifi '{wifi_name}'.\\n")
+    # Connect to ethernet
+    elif wifi_or_ethernet == 'e':
+        ...
 
     # Connect to API
 
@@ -390,12 +437,18 @@ elif 'main_revert.py' in os.listdir():
     print(f"Connected to the API hosted in '{base_url}'.")
 
     # Write the parameters to comms_config.json
-
-    comms_config_content = {
-        "WifiName": wifi_name,
-        "WifiPassword": wifi_pass, 
-        "BaseUrl": base_url
-    }
+    if wifi_or_ethernet=='w':
+        comms_config_content = {
+            "WifiOrEthernet": 'wifi',
+            "WifiName": wifi_name,
+            "WifiPassword": wifi_pass, 
+            "BaseUrl": base_url
+        }
+    elif wifi_or_ethernet=='e':
+        comms_config_content = {
+            "WifiOrEthernet": 'ethernet',
+            "BaseUrl": base_url
+        }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)
 
@@ -416,6 +469,7 @@ elif 'main_revert.py' in os.listdir():
     if type == '0':
         p = tankmodule_provision()
         p.start()
+        three_layers = True if p.three_layers else False
     elif type == '1':
         p = flowmeter_provision()
         p.start()
@@ -449,8 +503,12 @@ elif 'main_revert.py' in os.listdir():
     name = config_content['ActorNodeName']
 
     if type=='0':
-        print("This is a tank module.")
-        write_tank_module_main()
+        if three_layers:
+            print("This is a 3-layer tank module")
+            write_tank_module_3_main()
+        else:
+            print("This is a 2-layer tank module")
+            write_tank_module_main()
         
     elif type == '1':
         if flow_type == "Hall":
@@ -488,3 +546,5 @@ with open('provisioner.py', 'w') as file:
     file.write(step5)
     file.write(current_tap_main)
     file.write(step6)
+    file.write(tank_module_3_main)
+    file.write(step7)
