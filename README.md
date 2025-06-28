@@ -5,6 +5,8 @@ GridWorks micropython code for sensors/actuators running on a Raspberry Pi Pico 
 ## Configuring a new Pico
 
 - Plug in the Pico to a computer and open Thonny
+- Click the bottom right menu bar, and click "Install Micropython..."
+- For a Pico communicating Wifi select "Raspberry Pi - Pico W / Pico WH", for a Pico communicating Ethernet select "Wiznet W5500-EVB-Pico"
 - Create a new file
 - Copy and paste the content of the provided `provisioner.py` in that new file
 - Run the file and answer the prompts in Thonny's shell
