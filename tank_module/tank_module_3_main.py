@@ -1,3 +1,4 @@
+
 import machine
 import utime
 import network
@@ -18,7 +19,6 @@ APP_CONFIG_FILE = "app_config.json"
 
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
-DEFAULT_PICO_AB = "a"
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
@@ -140,7 +140,6 @@ class TankModule:
         except:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
-        self.pico_a_b = app_config.get("PicoAB", DEFAULT_PICO_AB)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
@@ -149,7 +148,6 @@ class TankModule:
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
-            "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
@@ -163,14 +161,15 @@ class TankModule:
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
-            "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "100"
+            "Version": "110"
         }
+        print(f"payload is")
+        print(payload)
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
         try:
@@ -178,7 +177,6 @@ class TankModule:
             if response.status_code == 200:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.pico_a_b = updated_config.get("PicoAB", self.pico_a_b)
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
@@ -334,3 +332,4 @@ class TankModule:
 if __name__ == "__main__":
     t = TankModule()
     t.start()
+    
