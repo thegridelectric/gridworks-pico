@@ -12,7 +12,7 @@ with open('tank_module/tank_module_3_main.py', 'r') as file:
     tank_module_3_main = file.read()
 with open('btu_meter/btu_main.py', 'r') as file:
     btu_meter_main = file.read()
-with open('tank_module/current_tap_main.py', 'r') as file:
+with open('current_tap/current_tap_main.py', 'r') as file:
     current_tap_main = file.read()
 
 # ----------------------------------------------------
