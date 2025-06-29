@@ -1,21 +1,4 @@
 # ----------------------------------------------------
-# Read the desired main.py files 
-# ----------------------------------------------------
-
-with open('flow_hall/flow_hall_main.py', 'r') as file:
-    flow_hall_main = file.read()
-with open('flow_reed/flow_reed_main.py', 'r') as file:
-    flow_reed_main = file.read()
-with open('tank_module/tank_module_main.py', 'r') as file:
-    tank_module_main = file.read()
-with open('tank_module/tank_module_3_main.py', 'r') as file:
-    tank_module_3_main = file.read()
-with open('btu_meter/btu_main.py', 'r') as file:
-    btu_meter_main = file.read()
-with open('tank_module/current_tap_main.py', 'r') as file:
-    current_tap_main = file.read()
-
-# ----------------------------------------------------
 # 1 - Beginning of provisioner and beginning of hall main
 # ----------------------------------------------------
 
@@ -551,17 +534,31 @@ elif 'main_revert.py' in os.listdir():
 # Write provisioner.py
 # ----------------------------------------------------
 
-with open('provisioner.py', 'w') as file:
-    file.write(step1)
-    file.write(flow_hall_main)
-    file.write(step2)
-    file.write(flow_reed_main)
-    file.write(step3)
-    file.write(tank_module_main)
-    file.write(step4)
-    file.write(btu_meter_main)
-    file.write(step5)
-    file.write(current_tap_main)
-    file.write(step6)
-    file.write(tank_module_3_main)
-    file.write(step7)
+with open('flow_hall/flow_hall_main.py', 'r') as file:
+    flow_hall_main = file.read()
+with open('flow_reed/flow_reed_main.py', 'r') as file:
+    flow_reed_main = file.read()
+with open('tank_module/tank_module_main.py', 'r') as file:
+    tank_module_main = file.read()
+with open('tank_module/tank_module_3_main.py', 'r') as file:
+    tank_module_3_main = file.read()
+with open('btu_meter/btu_main.py', 'r') as file:
+    btu_meter_main = file.read()
+with open('current_tap/current_tap_main.py', 'r') as file:
+    current_tap_main = file.read()
+
+if __name__ == "__main__":
+    with open('provisioner.py', 'w') as file:
+        file.write(step1)
+        file.write(flow_hall_main)
+        file.write(step2)
+        file.write(flow_reed_main)
+        file.write(step3)
+        file.write(tank_module_main)
+        file.write(step4)
+        file.write(btu_meter_main)
+        file.write(step5)
+        file.write(current_tap_main)
+        file.write(step6)
+        file.write(tank_module_3_main)
+        file.write(step7)

@@ -15,7 +15,7 @@ DEFAULT_ACTOR_NAME = "primary-btu"
 # FLOW
 DEFAULT_PUBLISH_TICKLIST_PERIOD_S = 10
 DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S = 5
-PULSE_PIN = 28 # 7 pins down on the hot side
+PULSE_PIN = 0
 MAIN_LOOP_MILLISECONDS = 100
 
 # TEMP
@@ -194,6 +194,31 @@ class BtuMeter:
             print(f"Error posting btu.meter.params: {e}")
 
     # ---------------------------------
+    # Code updates
+    # ---------------------------------
+
+    def update_code(self):
+        url = self.base_url + f"/{self.actor_node_name}/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "100"
+        }
+        json_payload = ujson.dumps(payload)
+        headers = {"Content-Type": "application/json"}
+        response = urequests.post(url, data=json_payload, headers=headers)
+        if response.status_code == 200:
+            # If there is a pending code update then the response is a python file, otherwise json
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+
+    # ---------------------------------
     # Receiving and publishing ticklists
     # ---------------------------------
             
@@ -318,6 +343,7 @@ class BtuMeter:
             self.connect_to_wifi()
         elif self.wifi_or_ethernet=='ethernet':
             self.connect_to_ethernet()
+        self.update_code()
         self.update_app_config()
         # FLOW
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
