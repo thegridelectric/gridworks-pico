@@ -243,9 +243,10 @@ class BtuMeter:
 
     def post_btu_data(self):
         url = self.base_url + f"/{self.actor_node_name}/btu-data"
-        if len(self.relative_us_list_list[0])==0 and len(self.relative_us_list_list[1])>0:
-            self.relative_us_list_list = self.relative_us_list_list[1:]
-            self.first_tick_timestamp_ns_list = self.first_tick_timestamp_ns_list[1:]
+        if len(self.relative_us_list_list)>1:
+            if len(self.relative_us_list_list[0])<2 and len(self.relative_us_list_list[1])>0:
+                self.relative_us_list_list = self.relative_us_list_list[1:]
+                self.first_tick_timestamp_ns_list = self.first_tick_timestamp_ns_list[1:]
         payload = {
             "HwUid": self.hw_uid,
             "FirstTickTimestampNanoSecondList": self.first_tick_timestamp_ns_list,
