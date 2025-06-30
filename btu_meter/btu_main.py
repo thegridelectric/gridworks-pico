@@ -25,7 +25,7 @@ DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 1
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
-
+ADC2_PIN_NUMBER = 28
 
 class BtuMeter:
     def __init__(self):
@@ -49,15 +49,18 @@ class BtuMeter:
         # TEMP
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
         self.mv0_list = []
         self.mv1_list = []
+        self.mv2_list = []
         self.mv0_timestamp_list = []
         self.mv1_timestamp_list = []
+        self.mv2_timestamp_list = []
         self.prev_mv0 = -1
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
-        self.node_names = ["ewt", "lwt"]
+        self.node_names = ["ewt", "lwt", "current-tap"]
         self.capture_offset_seconds = 0
         self.flow_timer = machine.Timer(-1)
         self.temp_timer = machine.Timer(-1)
@@ -253,8 +256,8 @@ class BtuMeter:
             "RelativeMicrosecondListList": self.relative_us_list_list,
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "AboutNodeNameList": self.node_names,
-            "MicroVoltsLists": [self.mv0_list, self.mv1_list],
-            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list],
+            "MicroVoltsLists": [self.mv0_list, self.mv1_list, self.mv2_list],
+            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list, self.mv2_timestamp_list],
             "TypeName": "btu.data", 
             "Version": "100"
             }
@@ -271,38 +274,33 @@ class BtuMeter:
         self.relative_us_list_list = []
         self.mv0_list = []
         self.mv1_list = []
+        self.mv2_list = []
         self.mv0_timestamp_list = []
         self.mv1_timestamp_list = []
+        self.mv2_timestamp_list = []
         gc.collect()
 
     # ---------------------------------
     # Measuring and posting microvolts
     # ---------------------------------
 
-    def adc0_micros(self):
+    def read_adc_micros(self, adc):
         sample_averages = []
         for _ in range(self.num_sample_averages):
             readings = []
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
-                readings.append(self.adc0.read_u16())
+                readings.append(adc.read_u16())
             voltages = list(map(lambda x: x * 3.3 / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
     
-    def adc1_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)
-
+    def read_ct_micros(self, adc):
+        voltage = int(adc.read_u16() * 3.3 / 65535 * 10**6)
+        self.mv2_list.append(voltage)
+        self.mv2_timestamp_list.append(utime.time_ns())
+    
     def save_microvolts(self, idx=2):
         time_ns = utime.time_ns()
         if idx==0:
@@ -332,20 +330,17 @@ class BtuMeter:
     def measure_temp(self, timer):
         '''Measure temp and record on change'''
         self.measuring_flow = False
-        # time_at_start_temp = utime.time_ns()
-        # print("\nStopped measuring flow to measure temp")
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
+        self.mv0 = self.read_adc_micros(self.adc0)
+        self.mv1 = self.read_adc_micros(self.adc1)
         if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
             self.save_microvolts(idx=0)
             self.prev_mv0 = self.mv0
         if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
             self.save_microvolts(idx=1)
             self.prev_mv1 = self.mv1
-        # timediff = utime.time_ns()-time_at_start_temp
-        # timediff = round(float(timediff)/1e9,2)
-        # print(f"Took {timediff}s to measure temp")
-        # print("Done measuring temp")
+        # Measure current tap ADC until we have 300 samples
+        while len(self.mv2_list) < 300 and not self.actively_publishing:
+            self.read_ct_micros(self.adc2)
 
     def start_flow_timer(self):
         '''Initialize the timer to measure data every second'''
@@ -388,8 +383,8 @@ class BtuMeter:
         # FLOW
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
         # TEMP
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
+        self.mv0 = self.read_adc_micros(self.adc0)
+        self.mv1 = self.read_adc_micros(self.adc1)
         self.save_microvolts()
         # utime.sleep(self.capture_offset_seconds)
         self.start_flow_timer()
