@@ -33,7 +33,7 @@ ADC2_PIN_NUMBER = 28
 # Main class
 # ---------------------------------
 
-class TankModule:
+class TankModule3:
 
     def __init__(self):
         # Unique ID
@@ -140,10 +140,6 @@ class TankModule:
         except:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
-<<<<<<< HEAD
-=======
-        self.pico_a_b = None
->>>>>>> 4fb16ada2c86b77fbb401a4362df5e3c1d824353
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
