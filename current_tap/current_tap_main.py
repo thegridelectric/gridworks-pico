@@ -22,7 +22,7 @@ DEFAULT_SYNC_READING_STEP_MICROSECONDS = 10
 DEFAULT_CAPTURE_PERIOD_S = 10
 
 # Other constants
-ADC0_PIN_NUMBER = 26
+ADC2_PIN_NUMBER = 28
 
 # ---------------------------------
 # Main class
@@ -35,7 +35,7 @@ class CurrentTap:
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         # Pins
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
         # Load configuration files
         self.load_comms_config()
         self.load_app_config()
@@ -185,8 +185,8 @@ class CurrentTap:
     # Measuring microvolts
     # ---------------------------------
 
-    def read_adc0_micros(self):
-        voltage = int(self.adc0.read_u16() * 3.3 / 65535 * 10**6)
+    def read_adc2_micros(self):
+        voltage = int(self.adc2.read_u16() * 3.3 / 65535 * 10**6)
         self.mv0_list.append(voltage)
         self.timestamp_list.append(utime.time_ns())
     
@@ -228,7 +228,7 @@ class CurrentTap:
     def main_loop(self):
         while True:
             while len(self.mv0_list) < 500 and not self.actively_posting:
-                self.read_adc0_micros()
+                self.read_adc2_micros()
                 utime.sleep_us(int(self.sync_reading_step_microseconds))
 
     def start(self):
@@ -238,7 +238,7 @@ class CurrentTap:
             self.connect_to_ethernet()
         self.update_code()
         self.update_app_config()
-        self.read_adc0_micros()
+        self.read_adc2_micros()
         self.start_sync_report_timer()
         self.main_loop()
 
