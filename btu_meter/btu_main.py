@@ -352,7 +352,7 @@ class BtuMeter:
         '''Measure temp and record on change'''
         self.measuring_flow = False
         # time_at_start_temp = utime.time_ns()
-        # print("\nStopped measuring flow to measure temp")
+        # print("Stopped measuring flow to measure temp")
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
         if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
