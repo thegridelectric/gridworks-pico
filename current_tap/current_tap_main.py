@@ -35,17 +35,15 @@ class CurrentTap:
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         # Pins
-        self.adc0 = machine.ADC(ADC2_PIN_NUMBER)
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
         # Load configuration files
         self.load_comms_config()
         self.load_app_config()
         # Measuring and repoting voltages
-        self.prev_mv0 = -1
-        self.mv0 = None
-        self.mv0_list = []
+        self.mv2_list = []
         self.timestamp_list = []
         # Synchronous reporting on the minute
-        self.sync_report_timer = machine.Timer(-1)
+        self.ct_timer = machine.Timer(-1)
         self.actively_posting = False
 
     # ---------------------------------
@@ -185,9 +183,9 @@ class CurrentTap:
     # Measuring microvolts
     # ---------------------------------
 
-    def read_adc0_micros(self):
-        voltage = int(self.adc0.read_u16() * 3.3 / 65535 * 10**6)
-        self.mv0_list.append(voltage)
+    def read_adc2_micros(self):
+        voltage = int(self.adc2.read_u16() * 3.3 / 65535 * 10**6)
+        self.mv2_list.append(voltage)
         self.timestamp_list.append(utime.time_ns())
     
     # ---------------------------------
@@ -198,7 +196,7 @@ class CurrentTap:
         url = self.base_url + f"/{self.actor_node_name}/current-tap-microvolts"
         payload = {
             "HwUid": self.hw_uid,
-            "MicroVoltsList": self.mv0_list, 
+            "MicroVoltsList": self.mv2_list, 
             "TimestampList": self.timestamp_list,
             "TypeName": "current.tap.microvolts", 
             "Version": "100"
@@ -211,15 +209,15 @@ class CurrentTap:
         except Exception as e:
             print(f"Error posting microvolts: {e}")
         gc.collect()
-        self.mv0_list = []
+        self.mv2_list = []
         self.timestamp_list = []
         
     def sync_report(self, timer):
         self.post_microvolts()
 
-    def start_sync_report_timer(self):
+    def start_ct_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
-        self.sync_report_timer.init(
+        self.ct_timer.init(
             period=int(self.capture_period_s * 1000), 
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
@@ -227,8 +225,8 @@ class CurrentTap:
 
     def main_loop(self):
         while True:
-            while len(self.mv0_list) < 500 and not self.actively_posting:
-                self.read_adc0_micros()
+            while len(self.mv2_list) < 500 and not self.actively_posting:
+                self.read_adc2_micros()
                 utime.sleep_us(int(self.sync_reading_step_microseconds))
 
     def start(self):
@@ -238,8 +236,8 @@ class CurrentTap:
             self.connect_to_ethernet()
         self.update_code()
         self.update_app_config()
-        self.read_adc0_micros()
-        self.start_sync_report_timer()
+        self.read_adc2_micros()
+        self.start_ct_timer()
         self.main_loop()
 
 if __name__ == "__main__":
