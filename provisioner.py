@@ -95,7 +95,7 @@ class PicoFlowHall:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -382,7 +382,7 @@ class PicoFlowReed:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -673,6 +673,8 @@ class TankModule:
         self.mv1 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        # Measuring the chip temperature
+        self.chip_temperatures = []
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
@@ -704,7 +706,7 @@ class TankModule:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -883,6 +885,7 @@ class TankModule:
             "HwUid": self.hw_uid,
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
+            "ChipTemperatureList": self.chip_temperatures,
             "TypeName": "microvolts", 
             "Version": "100"
         }
@@ -895,8 +898,10 @@ class TankModule:
             print(f"Error posting microvolts: {e}")
         gc.collect()
         self.microvolts_posted_time = utime.time()
+        self.chip_temperatures = []
         
     def sync_report(self, timer):
+        self.measure_chip_temperature()
         self.post_microvolts()
 
     def start_sync_report_timer(self):
@@ -906,6 +911,14 @@ class TankModule:
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
         )
+
+    def measure_chip_temperature(self):
+        temp_sensor_pin = machine.ADC(4)
+        reading = temp_sensor_pin.read_u16()
+        voltage = reading * 3.3 / 65535
+        temperature_c = 27 - (voltage - 0.706) / 0.001721
+        temperature_f = temperature_c * 9/5 + 32
+        self.chip_temperatures.append([utime.time(), temperature_f])
 
     def main_loop(self):
         self.mv0 = self.adc0_micros()
@@ -967,11 +980,14 @@ MAIN_LOOP_MILLISECONDS = 100
 
 # TEMP
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
-DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
-DEFAULT_NUM_SAMPLE_AVERAGES = 10
+DEFAULT_NUM_SAMPLE_AVERAGES = 1
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
+ADC2_PIN_NUMBER = 28
+
+# CT
+DEFAULT_CT_READING_STEP_MICROSECONDS = 10
 
 
 class BtuMeter:
@@ -988,7 +1004,10 @@ class BtuMeter:
         self.time_at_first_tick_ns = utime.time_ns()
         self.last_ticks_sent = utime.time()
         self.last_empty_ticks_sent = utime.time()
-        self.actively_publishing_ticklist = False
+        self.actively_publishing = False
+        self.measuring_flow = False
+        self.first_tick_timestamp_ns_list = []
+        self.relative_us_list_list = []
         
         # TEMP
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
@@ -1001,9 +1020,16 @@ class BtuMeter:
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
-        self.node_names = ["ewt", "lwt"]
+        self.node_names = ["ewt", "lwt", "ct"]
         self.capture_offset_seconds = 0
-        self.sync_report_timer = machine.Timer(-1)
+        self.flow_timer = machine.Timer(-1)
+        self.temp_timer = machine.Timer(-1)
+
+        # CT
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
+        self.mv2_list = []
+        self.mv2_timestamp_list = []
+        self.ct_timer = machine.Timer(-1)
 
     # ---------------------------------
     # Communication
@@ -1016,7 +1042,7 @@ class BtuMeter:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -1082,9 +1108,10 @@ class BtuMeter:
         self.publish_empty_ticklist_after_s = app_config.get("PublishEmptyTicklistAfterS", DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S)
         # TEMP
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
-        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
+        # CT
+        self.ct_reading_step_microseconds = app_config.get("CtReadingStepMicroseconds", DEFAULT_CT_READING_STEP_MICROSECONDS)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -1094,10 +1121,11 @@ class BtuMeter:
             "PublishTicklistPeriodS": self.publish_ticklist_period_s,
             "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             # TEMP
-            "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            # CT
+            "CtReadingStepMicroseconds": self.ct_reading_step_microseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -1112,10 +1140,11 @@ class BtuMeter:
             "PublishTicklistPeriodS": self.publish_ticklist_period_s,
             "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             # TEMP
-            "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            # CT
+            "CtReadingStepMicroseconds": self.ct_reading_step_microseconds,
             "TypeName": "btu.params",
             "Version": "100"
         }
@@ -1130,11 +1159,12 @@ class BtuMeter:
                 self.publish_ticklist_period_s = updated_config.get("PublishTicklistPeriodS", self.publish_ticklist_period_s)
                 self.publish_empty_ticklist_after_s = updated_config.get("PublishEmptyTicklistAfterS", self.publish_empty_ticklist_after_s)
                 # TEMP
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                # CT
+                self.ct_reading_step_microseconds = updated_config.get("CtReadingStepMicroseconds", self.ct_reading_step_microseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -1166,33 +1196,42 @@ class BtuMeter:
                 machine.reset()
 
     # ---------------------------------
-    # Receiving and publishing ticklists
+    # Receiving ticklists
     # ---------------------------------
             
     def pulse_callback(self, pin):
         '''Compute the relative timestamp and add it to a list'''
-        if not self.actively_publishing_ticklist:
-            current_timestamp_us = utime.ticks_us()
-            # Initialize the timestamp if this is the first pulse
-            if self.first_tick_us is None:
-                self.first_tick_us = current_timestamp_us
-                self.time_at_first_tick_ns = utime.time_ns()
-                self.relative_us_list.append(0)
-            else:
-                relative_us = current_timestamp_us - self.first_tick_us
-                if relative_us - self.relative_us_list[-1] > 1e3:
-                    self.relative_us_list.append(relative_us)
+        if not self.measuring_flow or self.actively_publishing:
+            return
+        current_timestamp_us = utime.ticks_us()
+        # Initialize the timestamp if this is the first pulse
+        if self.first_tick_us is None:
+            self.first_tick_us = current_timestamp_us
+            self.time_at_first_tick_ns = utime.time_ns()
+            self.relative_us_list = [0]
+        else:
+            relative_us = current_timestamp_us - self.first_tick_us
+            if relative_us - self.relative_us_list[-1] > 1e3:
+                self.relative_us_list.append(relative_us)
+
+    # ---------------------------------
+    # Posting data
+    # ---------------------------------
 
     def post_btu_data(self):
         url = self.base_url + f"/{self.actor_node_name}/btu-data"
+        if len(self.relative_us_list_list)>1:
+            if len(self.relative_us_list_list[0])<2 and len(self.relative_us_list_list[1])>0:
+                self.relative_us_list_list = self.relative_us_list_list[1:]
+                self.first_tick_timestamp_ns_list = self.first_tick_timestamp_ns_list[1:]
         payload = {
             "HwUid": self.hw_uid,
-            "FirstTickTimestampNanoSecond": self.time_at_first_tick_ns,
-            "RelativeMicrosecondList": self.relative_us_list,
+            "FirstTickTimestampNanoSecondList": self.first_tick_timestamp_ns_list,
+            "RelativeMicrosecondListList": self.relative_us_list_list,
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "AboutNodeNameList": self.node_names,
-            "MicroVoltsLists": [self.mv0_list, self.mv1_list],
-            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list],
+            "MicroVoltsLists": [self.mv0_list, self.mv1_list, self.mv2_list],
+            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list, self.mv2_timestamp_list],
             "TypeName": "btu.data", 
             "Version": "100"
             }
@@ -1203,16 +1242,20 @@ class BtuMeter:
             response.close()
         except Exception as e:
             print(f"Error posting relative timestamps: {e}")
-        gc.collect()
-        self.relative_us_list = []
         self.first_tick_us = None
+        self.relative_us_list = []
+        self.first_tick_timestamp_ns_list = []
+        self.relative_us_list_list = []
         self.mv0_list = []
         self.mv1_list = []
+        self.mv2_list = []
         self.mv0_timestamp_list = []
         self.mv1_timestamp_list = []
+        self.mv2_timestamp_list = []
+        gc.collect()
 
     # ---------------------------------
-    # Measuring and posting microvolts
+    # Measuring microvolts
     # ---------------------------------
 
     def adc0_micros(self):
@@ -1253,37 +1296,83 @@ class BtuMeter:
             self.mv0_timestamp_list.append(time_ns)
             self.mv1_timestamp_list.append(time_ns)
         
-    def sync_report(self, timer):
-        self.post_btu_data()
+    def measure_flow(self, timer):
+        '''Measure flow in ticklists and record the data'''
+        # Save the flow data
+        self.first_tick_timestamp_ns_list.append(self.time_at_first_tick_ns)
+        self.relative_us_list_list.append(self.relative_us_list)
+        # Reset the flow variables
+        self.first_tick_us = None
+        self.relative_us_list = []
+        self.time_at_first_tick_ns = utime.time_ns()
+        # Start measuring flow again
+        self.measuring_flow = True
 
-    def start_sync_report_timer(self):
-        '''Initialize the timer to call self.keep_alive periodically'''
-        self.sync_report_timer.init(
-            period=self.capture_period_s * 1000, 
+    def measure_temp(self, timer):
+        '''Measure temp and record on change'''
+        self.measuring_flow = False
+        # time_at_start_temp = utime.time_ns()
+        # print("Stopped measuring flow to measure temp")
+        self.mv0 = self.adc0_micros()
+        self.mv1 = self.adc1_micros()
+        if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
+            self.save_microvolts(idx=0)
+            self.prev_mv0 = self.mv0
+        if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
+            self.save_microvolts(idx=1)
+            self.prev_mv1 = self.mv1
+        # timediff = utime.time_ns()-time_at_start_temp
+        # timediff = round(float(timediff)/1e9,2)
+        # print(f"Took {timediff}s to measure temp")
+        # print("Done measuring temp")
+
+    def measure_ct(self, timer):
+        while len(self.mv2_list) < 200 and not self.actively_publishing:
+            voltage = int(self.adc2.read_u16() * 3.3 / 65535 * 10**6)
+            self.mv2_list.append(voltage)
+            self.mv2_timestamp_list.append(utime.time_ns())
+            utime.sleep_us(int(self.ct_reading_step_microseconds))
+        self.mv2_list = [max(self.mv2_list)]
+        self.mv2_timestamp_list = [self.mv2_timestamp_list[0]]
+
+    def start_flow_timer(self):
+        '''Initialize the timer to measure flow every second'''
+        self.flow_timer.init(
+            period=1000, 
             mode=machine.Timer.PERIODIC,
-            callback=self.sync_report
+            callback=self.measure_flow
+        )
+    
+    def start_temp_timer(self):
+        '''Initialize the timer to measure temp every second'''
+        self.temp_timer.init(
+            period=1000, 
+            mode=machine.Timer.PERIODIC,
+            callback=self.measure_temp
+        )
+    
+    def start_ct_timer(self):
+        '''Initialize the timer to measure CT every second'''
+        self.ct_timer.init(
+            period=1000, 
+            mode=machine.Timer.PERIODIC,
+            callback=self.measure_ct
         )
 
     def main_loop(self):
         while True:
             utime.sleep_ms(MAIN_LOOP_MILLISECONDS)
-            # Save TEMP on change
-            self.mv0 = self.adc0_micros()
-            self.mv1 = self.adc1_micros()
-            if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
-                self.save_microvolts(idx=0)
-                self.prev_mv0 = self.mv0
-            if abs(self.mv1 - self.prev_mv1) > self.async_capture_delta_micro_volts:
-                self.save_microvolts(idx=1)
-                self.prev_mv1 = self.mv1
-            # Post FLOW and TEMP periodically
-            if ((self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_ticklist_period_s) 
+            recorded_ticks = any(self.relative_us_list_list)
+            time_since_last_ticks_sent = utime.time() - self.last_ticks_sent
+            if (
+                (recorded_ticks and time_since_last_ticks_sent > self.publish_ticklist_period_s) 
                 or 
-                (not self.relative_us_list and utime.time()-self.last_ticks_sent > self.publish_empty_ticklist_after_s)):
-                self.actively_publishing_ticklist = True
+                (not recorded_ticks and time_since_last_ticks_sent > self.publish_empty_ticklist_after_s)
+                ):
+                self.actively_publishing = True
                 self.post_btu_data()
+                self.actively_publishing = False
                 self.last_ticks_sent = utime.time()
-                self.actively_publishing_ticklist = False
 
     def start(self):
         if self.wifi_or_ethernet=='wifi':
@@ -1299,12 +1388,17 @@ class BtuMeter:
         self.mv1 = self.adc1_micros()
         self.save_microvolts()
         # utime.sleep(self.capture_offset_seconds)
-        self.start_sync_report_timer()
+        self.start_flow_timer()
+        utime.sleep_ms(600)
+        self.start_temp_timer()
+        utime.sleep_ms(300)
+        self.start_ct_timer()
         self.main_loop()
 
 if __name__ == "__main__":
     b = BtuMeter()
     b.start()
+
     """
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -1335,7 +1429,7 @@ DEFAULT_SYNC_READING_STEP_MICROSECONDS = 10
 DEFAULT_CAPTURE_PERIOD_S = 10
 
 # Other constants
-ADC0_PIN_NUMBER = 26
+ADC2_PIN_NUMBER = 28
 
 # ---------------------------------
 # Main class
@@ -1348,17 +1442,15 @@ class CurrentTap:
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         # Pins
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
         # Load configuration files
         self.load_comms_config()
         self.load_app_config()
         # Measuring and repoting voltages
-        self.prev_mv0 = -1
-        self.mv0 = None
-        self.mv0_list = []
+        self.mv2_list = []
         self.timestamp_list = []
         # Synchronous reporting on the minute
-        self.sync_report_timer = machine.Timer(-1)
+        self.ct_timer = machine.Timer(-1)
         self.actively_posting = False
 
     # ---------------------------------
@@ -1372,7 +1464,7 @@ class CurrentTap:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -1498,9 +1590,9 @@ class CurrentTap:
     # Measuring microvolts
     # ---------------------------------
 
-    def read_adc0_micros(self):
-        voltage = int(self.adc0.read_u16() * 3.3 / 65535 * 10**6)
-        self.mv0_list.append(voltage)
+    def read_adc2_micros(self):
+        voltage = int(self.adc2.read_u16() * 3.3 / 65535 * 10**6)
+        self.mv2_list.append(voltage)
         self.timestamp_list.append(utime.time_ns())
     
     # ---------------------------------
@@ -1511,7 +1603,7 @@ class CurrentTap:
         url = self.base_url + f"/{self.actor_node_name}/current-tap-microvolts"
         payload = {
             "HwUid": self.hw_uid,
-            "MicroVoltsList": self.mv0_list, 
+            "MicroVoltsList": self.mv2_list, 
             "TimestampList": self.timestamp_list,
             "TypeName": "current.tap.microvolts", 
             "Version": "100"
@@ -1524,15 +1616,15 @@ class CurrentTap:
         except Exception as e:
             print(f"Error posting microvolts: {e}")
         gc.collect()
-        self.mv0_list = []
+        self.mv2_list = []
         self.timestamp_list = []
         
     def sync_report(self, timer):
         self.post_microvolts()
 
-    def start_sync_report_timer(self):
+    def start_ct_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
-        self.sync_report_timer.init(
+        self.ct_timer.init(
             period=int(self.capture_period_s * 1000), 
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
@@ -1540,8 +1632,8 @@ class CurrentTap:
 
     def main_loop(self):
         while True:
-            while len(self.mv0_list) < 500 and not self.actively_posting:
-                self.read_adc0_micros()
+            while len(self.mv2_list) < 500 and not self.actively_posting:
+                self.read_adc2_micros()
                 utime.sleep_us(int(self.sync_reading_step_microseconds))
 
     def start(self):
@@ -1551,8 +1643,8 @@ class CurrentTap:
             self.connect_to_ethernet()
         self.update_code()
         self.update_app_config()
-        self.read_adc0_micros()
-        self.start_sync_report_timer()
+        self.read_adc2_micros()
+        self.start_ct_timer()
         self.main_loop()
 
 if __name__ == "__main__":
@@ -1566,6 +1658,7 @@ if __name__ == "__main__":
 
 def write_tank_module_3_main():
     main_code = """
+
 import machine
 import utime
 import network
@@ -1600,7 +1693,7 @@ ADC2_PIN_NUMBER = 28
 # Main class
 # ---------------------------------
 
-class TankModule:
+class TankModule3:
 
     def __init__(self):
         # Unique ID
@@ -1622,6 +1715,8 @@ class TankModule:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        # Measuring the chip temperature
+        self.chip_temperatures = []
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
@@ -1646,7 +1741,7 @@ class TankModule:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -1707,7 +1802,6 @@ class TankModule:
         except:
             app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
-        self.pico_a_b = None
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
@@ -1716,7 +1810,6 @@ class TankModule:
     def save_app_config(self):
         config = {
             "ActorNodeName": self.actor_node_name,
-            "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
@@ -1730,13 +1823,12 @@ class TankModule:
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
-            "PicoAB": self.pico_a_b,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "TypeName": "tank.module.params",
-            "Version": "100"
+            "Version": "110"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -1745,7 +1837,6 @@ class TankModule:
             if response.status_code == 200:
                 updated_config = response.json()
                 self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.pico_a_b = updated_config.get("PicoAB", self.pico_a_b)
                 self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
@@ -1839,6 +1930,7 @@ class TankModule:
             "HwUid": self.hw_uid,
             "AboutNodeNameList": [self.node_names[idx]] if idx<=2 else self.node_names,
             "MicroVoltsList": mv_list, 
+            "ChipTemperatureList": self.chip_temperatures,
             "TypeName": "microvolts", 
             "Version": "100"
         }
@@ -1851,8 +1943,10 @@ class TankModule:
             print(f"Error posting microvolts: {e}")
         gc.collect()
         self.microvolts_posted_time = utime.time()
+        self.chip_temperatures = []
         
     def sync_report(self, timer):
+        self.measure_chip_temperature()
         self.post_microvolts()
 
     def start_sync_report_timer(self):
@@ -1862,6 +1956,14 @@ class TankModule:
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
         )
+    
+    def measure_chip_temperature(self):
+        temp_sensor_pin = machine.ADC(4)
+        reading = temp_sensor_pin.read_u16()
+        voltage = reading * 3.3 / 65535
+        temperature_c = 27 - (voltage - 0.706) / 0.001721
+        temperature_f = temperature_c * 9/5 + 32
+        self.chip_temperatures.append([utime.time(), temperature_f])
 
     def main_loop(self):
         self.mv0 = self.adc0_micros()
@@ -1899,8 +2001,10 @@ class TankModule:
         self.main_loop()
 
 if __name__ == "__main__":
-    t = TankModule()
+    t = TankModule3()
     t.start()
+    
+
     """
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -2226,7 +2330,7 @@ elif 'main_revert.py' in os.listdir():
             except Exception as e:
                 print(f"There was an error connecting to the API: {e}. Please check the hostname and try again.")
 
-    print(f"Connected to the API hosted in '{base_url}'.")
+    print(f"Connected to the API hosted at '{base_url}'.")
 
     # Write the parameters to comms_config.json
     if wifi_or_ethernet=='w':
@@ -2252,9 +2356,9 @@ elif 'main_revert.py' in os.listdir():
 
     got_type = False
     while not got_type:
-        type = input("Is this Pico associated to a tank module (enter '0'), a flowmeter (enter '1'), a BTU-meter (enter '2'), a CurrentTap (enter '3'): ")
-        if type not in {'0','1','2','3'}:
-            print('Please enter 0, 1, 2, or 3.')
+        type = input("Is this Pico associated to a TankModule (enter '0') or a BtuMeter (enter '1'): ")
+        if type not in {'0','1'}:
+            print('Please enter 0 or 1.')
         else:
             got_type = True
 
@@ -2262,26 +2366,26 @@ elif 'main_revert.py' in os.listdir():
         p = tankmodule_provision()
         p.start()
         three_layers = True if p.three_layers else False
+    # elif type == '1':
+    #     p = flowmeter_provision()
+    #     p.start()
+    #     got_subtype = False
+    #     while not got_subtype:
+    #         subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
+    #         if subtype not in {'0','1'}:
+    #             print('Please enter 0 or 1.')
+    #         else:
+    #             got_subtype = True
+    #     if subtype == '0':
+    #         flow_type = "Hall"
+    #     else:
+    #         flow_type = "Reed"
     elif type == '1':
-        p = flowmeter_provision()
-        p.start()
-        got_subtype = False
-        while not got_subtype:
-            subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
-            if subtype not in {'0','1'}:
-                print('Please enter 0 or 1.')
-            else:
-                got_subtype = True
-        if subtype == '0':
-            flow_type = "Hall"
-        else:
-            flow_type = "Reed"
-    elif type == '2':
         p = btu_provision()
         p.start()
-    elif type == '3':
-        p = current_tap_provision()
-        p.start()
+    # elif type == '3':
+    #     p = current_tap_provision()
+    #     p.start()
 
     print(f"\n{'-'*40}\n[3/4] Success! Wrote 'app_config.json' on the Pico.\n{'-'*40}\n")
 
@@ -2302,21 +2406,21 @@ elif 'main_revert.py' in os.listdir():
             print("This is a 2-layer tank module")
             write_tank_module_main()
         
-    elif type == '1':
-        if flow_type == "Hall":
-            print("This is a hall meter.")
-            write_flow_hall_main()
-        else:
-            print("This is a reed meter.")
-            write_flow_reed_main()
+    # elif type == '1':
+    #     if flow_type == "Hall":
+    #         print("This is a hall meter.")
+    #         write_flow_hall_main()
+    #     else:
+    #         print("This is a reed meter.")
+    #         write_flow_reed_main()
     
-    elif type=='2':
+    elif type=='1':
         print("This is a BTU meter.")
         write_btu_meter_main()
 
-    elif type=='3':
-        print("This is a CurrentTap.")
-        write_current_tap_main()
+    # elif type=='3':
+    #     print("This is a CurrentTap.")
+    #     write_current_tap_main()
 
     print(f"\n{'-'*40}\n[4/4] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
 

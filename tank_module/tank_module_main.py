@@ -51,6 +51,8 @@ class TankModule:
         self.mv1 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        # Measuring the chip temperature
+        self.chip_temperatures = []
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
@@ -82,7 +84,7 @@ class TankModule:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -261,6 +263,7 @@ class TankModule:
             "HwUid": self.hw_uid,
             "AboutNodeNameList": [self.node_names[idx]] if idx<=1 else self.node_names,
             "MicroVoltsList": mv_list, 
+            "ChipTemperatureList": self.chip_temperatures,
             "TypeName": "microvolts", 
             "Version": "100"
         }
@@ -273,8 +276,10 @@ class TankModule:
             print(f"Error posting microvolts: {e}")
         gc.collect()
         self.microvolts_posted_time = utime.time()
+        self.chip_temperatures = []
         
     def sync_report(self, timer):
+        self.measure_chip_temperature()
         self.post_microvolts()
 
     def start_sync_report_timer(self):
@@ -284,6 +289,14 @@ class TankModule:
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
         )
+
+    def measure_chip_temperature(self):
+        temp_sensor_pin = machine.ADC(4)
+        reading = temp_sensor_pin.read_u16()
+        voltage = reading * 3.3 / 65535
+        temperature_c = 27 - (voltage - 0.706) / 0.001721
+        temperature_f = temperature_c * 9/5 + 32
+        self.chip_temperatures.append([utime.time(), temperature_f])
 
     def main_loop(self):
         self.mv0 = self.adc0_micros()

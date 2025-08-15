@@ -434,7 +434,7 @@ elif 'main_revert.py' in os.listdir():
             except Exception as e:
                 print(f"There was an error connecting to the API: {e}. Please check the hostname and try again.")
 
-    print(f"Connected to the API hosted in '{base_url}'.")
+    print(f"Connected to the API hosted at '{base_url}'.")
 
     # Write the parameters to comms_config.json
     if wifi_or_ethernet=='w':
@@ -460,9 +460,9 @@ elif 'main_revert.py' in os.listdir():
 
     got_type = False
     while not got_type:
-        type = input("Is this Pico associated to a tank module (enter '0'), a flowmeter (enter '1'), a BTU-meter (enter '2'), a CurrentTap (enter '3'): ")
-        if type not in {'0','1','2','3'}:
-            print('Please enter 0, 1, 2, or 3.')
+        type = input("Is this Pico associated to a TankModule (enter '0') or a BtuMeter (enter '1'): ")
+        if type not in {'0','1'}:
+            print('Please enter 0 or 1.')
         else:
             got_type = True
 
@@ -470,26 +470,26 @@ elif 'main_revert.py' in os.listdir():
         p = tankmodule_provision()
         p.start()
         three_layers = True if p.three_layers else False
+    # elif type == '1':
+    #     p = flowmeter_provision()
+    #     p.start()
+    #     got_subtype = False
+    #     while not got_subtype:
+    #         subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
+    #         if subtype not in {'0','1'}:
+    #             print('Please enter 0 or 1.')
+    #         else:
+    #             got_subtype = True
+    #     if subtype == '0':
+    #         flow_type = "Hall"
+    #     else:
+    #         flow_type = "Reed"
     elif type == '1':
-        p = flowmeter_provision()
-        p.start()
-        got_subtype = False
-        while not got_subtype:
-            subtype = input("Is this FlowModule Hall (enter '0') or Reed (enter '1'): ")
-            if subtype not in {'0','1'}:
-                print('Please enter 0 or 1.')
-            else:
-                got_subtype = True
-        if subtype == '0':
-            flow_type = "Hall"
-        else:
-            flow_type = "Reed"
-    elif type == '2':
         p = btu_provision()
         p.start()
-    elif type == '3':
-        p = current_tap_provision()
-        p.start()
+    # elif type == '3':
+    #     p = current_tap_provision()
+    #     p.start()
 
     print(f"\\n{'-'*40}\\n[3/4] Success! Wrote 'app_config.json' on the Pico.\\n{'-'*40}\\n")
 
@@ -510,21 +510,21 @@ elif 'main_revert.py' in os.listdir():
             print("This is a 2-layer tank module")
             write_tank_module_main()
         
-    elif type == '1':
-        if flow_type == "Hall":
-            print("This is a hall meter.")
-            write_flow_hall_main()
-        else:
-            print("This is a reed meter.")
-            write_flow_reed_main()
+    # elif type == '1':
+    #     if flow_type == "Hall":
+    #         print("This is a hall meter.")
+    #         write_flow_hall_main()
+    #     else:
+    #         print("This is a reed meter.")
+    #         write_flow_reed_main()
     
-    elif type=='2':
+    elif type=='1':
         print("This is a BTU meter.")
         write_btu_meter_main()
 
-    elif type=='3':
-        print("This is a CurrentTap.")
-        write_current_tap_main()
+    # elif type=='3':
+    #     print("This is a CurrentTap.")
+    #     write_current_tap_main()
 
     print(f"\\n{'-'*40}\\n[4/4] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
 

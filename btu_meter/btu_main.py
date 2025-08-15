@@ -20,11 +20,14 @@ MAIN_LOOP_MILLISECONDS = 100
 
 # TEMP
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
-DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 1
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
+ADC2_PIN_NUMBER = 28
+
+# CT
+DEFAULT_CT_READING_STEP_MICROSECONDS = 10
 
 
 class BtuMeter:
@@ -57,10 +60,16 @@ class BtuMeter:
         self.prev_mv1 = -1
         self.mv0 = None
         self.mv1 = None
-        self.node_names = ["ewt", "lwt"]
+        self.node_names = ["ewt", "lwt", "ct"]
         self.capture_offset_seconds = 0
         self.flow_timer = machine.Timer(-1)
         self.temp_timer = machine.Timer(-1)
+
+        # CT
+        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
+        self.mv2_list = []
+        self.mv2_timestamp_list = []
+        self.ct_timer = machine.Timer(-1)
 
     # ---------------------------------
     # Communication
@@ -73,7 +82,7 @@ class BtuMeter:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -139,9 +148,10 @@ class BtuMeter:
         self.publish_empty_ticklist_after_s = app_config.get("PublishEmptyTicklistAfterS", DEFAULT_PUBLISH_EMPTY_TICKLIST_AFTER_S)
         # TEMP
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
-        self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
+        # CT
+        self.ct_reading_step_microseconds = app_config.get("CtReadingStepMicroseconds", DEFAULT_CT_READING_STEP_MICROSECONDS)
     
     def save_app_config(self):
         '''Save the parameters to the app_config file'''
@@ -151,10 +161,11 @@ class BtuMeter:
             "PublishTicklistPeriodS": self.publish_ticklist_period_s,
             "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             # TEMP
-            "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages":self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            # CT
+            "CtReadingStepMicroseconds": self.ct_reading_step_microseconds,
         }
         with open(APP_CONFIG_FILE, "w") as f:
             ujson.dump(config, f)
@@ -169,10 +180,11 @@ class BtuMeter:
             "PublishTicklistPeriodS": self.publish_ticklist_period_s,
             "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             # TEMP
-            "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            # CT
+            "CtReadingStepMicroseconds": self.ct_reading_step_microseconds,
             "TypeName": "btu.params",
             "Version": "100"
         }
@@ -187,11 +199,12 @@ class BtuMeter:
                 self.publish_ticklist_period_s = updated_config.get("PublishTicklistPeriodS", self.publish_ticklist_period_s)
                 self.publish_empty_ticklist_after_s = updated_config.get("PublishEmptyTicklistAfterS", self.publish_empty_ticklist_after_s)
                 # TEMP
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
                 self.samples = updated_config.get("Samples", self.samples)
                 self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
                 self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
                 self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                # CT
+                self.ct_reading_step_microseconds = updated_config.get("CtReadingStepMicroseconds", self.ct_reading_step_microseconds)
                 self.save_app_config()
             response.close()
         except Exception as e:
@@ -223,7 +236,7 @@ class BtuMeter:
                 machine.reset()
 
     # ---------------------------------
-    # Receiving and publishing ticklists
+    # Receiving ticklists
     # ---------------------------------
             
     def pulse_callback(self, pin):
@@ -241,6 +254,10 @@ class BtuMeter:
             if relative_us - self.relative_us_list[-1] > 1e3:
                 self.relative_us_list.append(relative_us)
 
+    # ---------------------------------
+    # Posting data
+    # ---------------------------------
+
     def post_btu_data(self):
         url = self.base_url + f"/{self.actor_node_name}/btu-data"
         if len(self.relative_us_list_list)>1:
@@ -253,8 +270,8 @@ class BtuMeter:
             "RelativeMicrosecondListList": self.relative_us_list_list,
             "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "AboutNodeNameList": self.node_names,
-            "MicroVoltsLists": [self.mv0_list, self.mv1_list],
-            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list],
+            "MicroVoltsLists": [self.mv0_list, self.mv1_list, self.mv2_list],
+            "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list, self.mv2_timestamp_list],
             "TypeName": "btu.data", 
             "Version": "100"
             }
@@ -271,12 +288,14 @@ class BtuMeter:
         self.relative_us_list_list = []
         self.mv0_list = []
         self.mv1_list = []
+        self.mv2_list = []
         self.mv0_timestamp_list = []
         self.mv1_timestamp_list = []
+        self.mv2_timestamp_list = []
         gc.collect()
 
     # ---------------------------------
-    # Measuring and posting microvolts
+    # Measuring microvolts
     # ---------------------------------
 
     def adc0_micros(self):
@@ -333,7 +352,7 @@ class BtuMeter:
         '''Measure temp and record on change'''
         self.measuring_flow = False
         # time_at_start_temp = utime.time_ns()
-        # print("\nStopped measuring flow to measure temp")
+        # print("Stopped measuring flow to measure temp")
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
         if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
@@ -347,8 +366,17 @@ class BtuMeter:
         # print(f"Took {timediff}s to measure temp")
         # print("Done measuring temp")
 
+    def measure_ct(self, timer):
+        while len(self.mv2_list) < 200 and not self.actively_publishing:
+            voltage = int(self.adc2.read_u16() * 3.3 / 65535 * 10**6)
+            self.mv2_list.append(voltage)
+            self.mv2_timestamp_list.append(utime.time_ns())
+            utime.sleep_us(int(self.ct_reading_step_microseconds))
+        self.mv2_list = [max(self.mv2_list)]
+        self.mv2_timestamp_list = [self.mv2_timestamp_list[0]]
+
     def start_flow_timer(self):
-        '''Initialize the timer to measure data every second'''
+        '''Initialize the timer to measure flow every second'''
         self.flow_timer.init(
             period=1000, 
             mode=machine.Timer.PERIODIC,
@@ -361,6 +389,14 @@ class BtuMeter:
             period=1000, 
             mode=machine.Timer.PERIODIC,
             callback=self.measure_temp
+        )
+    
+    def start_ct_timer(self):
+        '''Initialize the timer to measure CT every second'''
+        self.ct_timer.init(
+            period=1000, 
+            mode=machine.Timer.PERIODIC,
+            callback=self.measure_ct
         )
 
     def main_loop(self):
@@ -393,8 +429,10 @@ class BtuMeter:
         self.save_microvolts()
         # utime.sleep(self.capture_offset_seconds)
         self.start_flow_timer()
-        utime.sleep_ms(800)
+        utime.sleep_ms(600)
         self.start_temp_timer()
+        utime.sleep_ms(300)
+        self.start_ct_timer()
         self.main_loop()
 
 if __name__ == "__main__":
