@@ -22,7 +22,7 @@ DEFAULT_SYNC_READING_STEP_MICROSECONDS = 10
 DEFAULT_CAPTURE_PERIOD_S = 10
 
 # Other constants
-ADC0_PIN_NUMBER = 26
+ADC2_PIN_NUMBER = 28
 
 # ---------------------------------
 # Main class
@@ -35,7 +35,7 @@ class CurrentTap:
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
         self.hw_uid = f"pico_{pico_unique_id[-6:]}"
         # Pins
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
+        self.adc0 = machine.ADC(ADC2_PIN_NUMBER)
         # Load configuration files
         self.load_comms_config()
         self.load_app_config()
