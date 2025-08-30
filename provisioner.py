@@ -5,16 +5,7 @@ import utime
 import urequests
 import ubinascii
 import os
-import re
 
-# Constants
-ADC0_PIN_NUMBER = 26
-ADC1_PIN_NUMBER = 27
-ADC2_PIN_NUMBER = 28
-TOTAL_REPORTS = 200
-SAMPLES = 1000
-PIN_0_OFFSET = 2.4
-PIN_1_OFFSET = -2.4
 
 # Remove existing files
 if 'boot.py' in os.listdir():
@@ -27,18 +18,6 @@ if 'main.py' in os.listdir():
     os.remove('main.py')
 if 'main_previous.py' in os.listdir():
     os.remove('main_previous.py')
-
-def validate_ip_address(ip):
-    """Validate IP address format"""
-    pattern = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
-    match = re.match(pattern, ip)
-    if not match:
-        return False
-    # Check each octet is 0-255
-    for octet in match.groups():
-        if int(octet) > 255:
-            return False
-    return True
 
 # *************************
 # 1/3 - MAIN.PY PROVISION
@@ -1213,127 +1192,69 @@ if __name__ == "__main__":
 # Tank module
 # -------------------------
 
-class tankmodule_provision:
+def provision_tank_module():
+    """Configure tank module app_config.json"""
+    # Determine if its an original TankModule (2 picos, 4 temps) or TankModule3 (3 temps)
+    while True:
+        num_temps = input("How many temperatures is this Pico measuring (enter '2' or '3'): ")
+        if num_temps in {'2', '3'}:
+            three_layers = (num_temps == '3')
+            break
+        print("Invalid number of temperatures")
 
-    def __init__(self):
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
-        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
-        pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
-        self.hw_uid = f"pico_{pico_unique_id[-6:]}"
-        self.samples = SAMPLES
-        self.total_reports = TOTAL_REPORTS
-        self.num_recorded = 0
+    # Get tank name
+    while True:
+        tank_name = input("Tank Name: 'buffer', 'tank1', 'tank2', 'tank3': ")
+        if tank_name in {'buffer', 'tank1', 'tank2', 'tank3'}:
+            break
+        print("Invalid tank name")
 
-    def mv0(self):
-        readings = []
-        for _ in range(self.samples):
-            # Read the raw ADC value (0-65535)
-            readings.append(self.adc0.read_u16())
-        voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**4 * sum(voltages) / self.samples) / 10
-    
-    def mv1(self):
-        readings = []
-        for _ in range(self.samples):
-            # Read the raw ADC value (0-65535)
-            readings.append(self.adc1.read_u16())
-        voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**4 * sum(voltages) / self.samples) / 10
-
-    def mv2(self):
-        readings = []
-        for _ in range(self.samples):
-            # Read the raw ADC value (0-65535)
-            readings.append(self.adc2.read_u16())
-        voltages = list(map(lambda x: x * 3.3 / 65535, readings))
-        return int(10**4 * sum(voltages) / self.samples) / 10
+    # For 2-layer tanks, get pico a/b designation
+    if not three_layers:
+        while True:
+            pico_ab = input("Tank Module pico a or b? Type 'a' or 'b': ")
+            if pico_ab in {'a', 'b'}:
+                break
+            print("Please enter a or b!")
         
-    def print_sample(self):
-            report = f"{self.hw_uid}, {self.mv0() - PIN_0_OFFSET}, {self.mv1() - PIN_1_OFFSET}, {self.mv2()}"
-            print(report)
-            self.num_recorded += 1
+        config = {
+            "ActorNodeName": tank_name,
+            "PicoAB": pico_ab,
+        }
+    else:
+        config = {
+            "ActorNodeName": tank_name,
+        }
     
-    def set_name(self):
-        have_three_layer_pico = False
-        while not have_three_layer_pico:
-            three_layer_pico = input("How many temperatures is this Pico measuring (enter '2' or '3'): ")
-            if three_layer_pico not in {'2','3'}:
-                print("Invalid number of temerpatures")
-            else:
-                have_three_layer_pico = True
-                three_layer_pico = True if three_layer_pico=='3' else False
-                self.three_layers = three_layer_pico
+    # Save config
+    with open("app_config.json", "w") as f:
+        ujson.dump(config, f)
+    
+    return three_layers, tank_name
 
-        if not three_layer_pico:
-            got_a_or_b = False
-            while not got_a_or_b:
-                a_or_b = input("Tank Module pico a or b? Type 'a' or 'b': ")
-                self.pico_a_b = a_or_b
-                if a_or_b not in {'a', 'b'}:
-                    print("please enter a or b!")
-                else:
-                    got_a_or_b = True
-            
-            got_tank_name = False
-            while not got_tank_name:
-                name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
-                self.name = name
-                if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
-                    print("bad tank name")
-                else:
-                    got_tank_name = True
-            self.actor_node_name = name
-            config = {
-                "ActorNodeName": self.actor_node_name,
-                "PicoAB": self.pico_a_b,
-            }
-        else:
-            got_tank_name = False
-            while not got_tank_name:
-                name = input(f"Tank Name: 'buffer', 'tank1', tank2', 'tank3': ")
-                self.name = name
-                if name not in {'buffer', 'tank1', 'tank2', 'tank3'}:
-                    print("bad tank name")
-                else:
-                    got_tank_name = True
-            self.actor_node_name = name
-            config = {
-                "ActorNodeName": self.actor_node_name,
-            }
-        with open("app_config.json", "w") as f:
-            ujson.dump(config, f)
-            
-    def start(self):
-        self.set_name()
-        # print("HW UID, Pin 0 mV, Pin 1 mV, Pin 2 mV (OFFSETS DONE ON PIN 0 and 1)")
-        # while self.num_recorded < TOTAL_REPORTS:
-        #     self.print_sample()
 
 
 # -------------------------
 # BTU meter
 # -------------------------
 
-class btu_provision:  
-    def set_name(self):
-        got_tank_name = False
-        while not got_tank_name:
-            name = input(f"BTU Name: 'dist-btu', 'store-btu', 'primary-btu', 'sieg-btu': ")
-            self.name = name
-            if name not in {'primary-btu', 'store-btu', 'dist-btu', 'sieg-btu'}:
-                print("Invalid btu name")
-            else:
-                got_tank_name = True
-        self.actor_node_name = name
-        config = {
-            "ActorNodeName": self.actor_node_name,
-        }
-        with open("app_config.json", "w") as f:
-            ujson.dump(config, f)
-            
-    def start(self):
-        self.set_name()
+def provision_btu_meter():
+    """Configure BTU meter app_config"""
+    while True:
+        btu_name = input("BTU Name: 'dist-btu', 'store-btu', 'primary-btu', 'sieg-btu': ")
+        if btu_name in {'primary-btu', 'store-btu', 'dist-btu', 'sieg-btu'}:
+            break
+        print("Invalid BTU name")
+
+    config = {
+        "ActorNodeName": btu_name,
+    }
+
+    # Save config
+    with open("app_config.json", "w") as f:
+        ujson.dump(config, f)
+
+    return btu_name
 
 
 # *************************
@@ -1343,8 +1264,8 @@ class btu_provision:
 if __name__ == "__main__":
 
     # Get hardware ID
-    pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()
-    hw_uid = f"pico_{pico_unique_id[-6:]}"
+    pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
+    hw_uid = f"pico_{pico_unique_id}"
     print(f"\nThis Pico's unique hardware ID is {hw_uid}.")
 
     # -------------------------
@@ -1488,51 +1409,27 @@ elif 'main_revert.py' in os.listdir():
     print(f"\n{'-'*40}\n[2/4] Success! Wrote 'comms_config.json' on the Pico.\n{'-'*40}\n")
 
     # -------------------------
-    # Write app_config.json
+    # Write app_config.json and main code
     # -------------------------
+    while True:
+        device_type = input("Is this Pico associated to a TankModule (enter '0') or a BtuMeter (enter '1'): ")
+        if device_type in {'0', '1'}:
+            break
+        print('Please enter 0 or 1.')
 
-    got_type = False
-    while not got_type:
-        type = input("Is this Pico associated to a TankModule (enter '0') or a BtuMeter (enter '1'): ")
-        if type not in {'0','1'}:
-            print('Please enter 0 or 1.')
-        else:
-            got_type = True
-
-    if type == '0':
-        p = tankmodule_provision()
-        p.start()
-        three_layers = True if p.three_layers else False
-
-    elif type == '1':
-        p = btu_provision()
-        p.start()
-
-
-    print(f"\n{'-'*40}\n[3/4] Success! Wrote 'app_config.json' on the Pico.\n{'-'*40}\n")
-
-    # -------------------------
-    # Write main.py
-    # -------------------------
-
-    # Read the actor node name
-    with open('app_config.json', 'r') as file:
-        config_content = ujson.load(file)
-    name = config_content['ActorNodeName']
-
-    if type=='0':
+    if device_type == '0':
+        three_layers, actor_name = provision_tank_module()
         if three_layers:
             print("This is a 3-layer tank module")
             write_tank_module_3_main()
         else:
             print("This is a 2-layer tank module")
             write_tank_module_main()
-        
-    
-    elif type=='1':
+    elif device_type == '1':
+        actor_name = provision_btu_meter()
         print("This is a BTU meter.")
         write_btu_meter_main()
-
+        
 
     print(f"\n{'-'*40}\n[4/4] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
 
