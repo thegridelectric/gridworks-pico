@@ -6,6 +6,7 @@ import urequests
 import ubinascii
 import os
 
+PRIMARY_SCADA_IP = "192.168.2.200"
 
 # Remove existing files
 if 'boot.py' in os.listdir():
@@ -22,28 +23,6 @@ if 'main_previous.py' in os.listdir():
 # *************************
 # 1/3 - MAIN.PY PROVISION
 # *************************
-
-
-def validate_ip_address(ip):
-    """Validate IP address format - MicroPython compatible"""
-    parts = ip.split('.')
-    if len(parts) != 4:
-        return False
-    
-    for part in parts:
-        # Check if it's a number
-        if not part or not all(c in '0123456789' for c in part):
-            return False
-        # Check if it's in valid range
-        try:
-            num = int(part)
-            if num < 0 or num > 255:
-                return False
-        except:
-            return False
-    
-    return True
-
 
 
 def write_tank_module_main():
@@ -1361,9 +1340,10 @@ elif 'main_revert.py' in os.listdir():
     connected_to_api = False
     while not connected_to_api:
 
-        ip_address = input("Enter fixed IP address (e.g., '192.168.2.200'): ").strip()
-        if not validate_ip_address(ip_address):
-            raise Exception(f"{ip_address} is not a valid IP address. Please try again")
+        ip_address = input("Enter IP address (retirm fpr default): ").strip()
+        if ip_address == '':
+            ip_address = PRIMARY_SCADA_IP
+
         base_url = f"http://{ip_address}:8000"
 
         url = base_url + "/new-pico"
@@ -1394,13 +1374,13 @@ elif 'main_revert.py' in os.listdir():
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
             "WifiPassword": wifi_pass, 
-            "BaseUrl": base_url,
+            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
             "BackupUrl": backup_url
         }
     elif wifi_or_ethernet=='e':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": base_url,
+            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000"
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
