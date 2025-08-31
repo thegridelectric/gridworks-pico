@@ -1,5 +1,5 @@
 {
-    "WifiName": "GridWorks",
-    "WifiPassword": "PASS", 
-    "BaseUrl": "http://fir2.local:8000"
+    "WifiOrEthernet": "ethernet",
+    "BaseUrl": "http://192.168.0.200:8000",
+    "BackupUrl": "http://beech.local:8000"
 }
