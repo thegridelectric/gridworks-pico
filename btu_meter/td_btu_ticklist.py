@@ -164,7 +164,7 @@ class BtuMeter:
     
     def update_app_config(self):
         '''Post current parameters, and update parameters based on the server response'''
-        url = self.base_url + f"/{self.actor_node_name}/btu-params"
+        url = self.base_url + f"/{self.actor_node_name}/ticklist-btu-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -176,8 +176,8 @@ class BtuMeter:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "TypeName": "btu.params",
-            "Version": "100"
+            "TypeName": "ticklist.btu.params",
+            "Version": "000"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -245,22 +245,23 @@ class BtuMeter:
                 self.relative_us_list.append(relative_us)
 
     def post_btu_data(self):
-        url = self.base_url + f"/{self.actor_node_name}/btu-data"
+        url = self.base_url + f"/{self.actor_node_name}/ticklist-btu-data"
         if len(self.relative_us_list_list)>1:
             if len(self.relative_us_list_list[0])<2 and len(self.relative_us_list_list[1])>0:
                 self.relative_us_list_list = self.relative_us_list_list[1:]
                 self.first_tick_timestamp_ns_list = self.first_tick_timestamp_ns_list[1:]
         payload = {
             "HwUid": self.hw_uid,
+            "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "FirstTickTimestampNanoSecondList": self.first_tick_timestamp_ns_list,
             "RelativeMicrosecondListList": self.relative_us_list_list,
-            "PicoBeforePostTimestampNanoSecond": utime.time_ns(),
             "AboutNodeNameList": self.node_names,
             "MicroVoltsLists": [self.mv0_list, self.mv1_list, self.mv2_list],
             "MicroVoltsTimestampsLists": [self.mv0_timestamp_list, self.mv1_timestamp_list, self.mv2_timestamp_list],
-            "TypeName": "btu.data", 
-            "Version": "100"
+            "TypeName": "ticklist.btu.data", 
+            "Version": "000"
             }
+
         headers = {'Content-Type': 'application/json'}
         json_payload = ujson.dumps(payload)
         try:

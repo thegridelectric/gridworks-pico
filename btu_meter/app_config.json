@@ -1,0 +1,14 @@
+{
+    "CapturePeriodS": 60, 
+    "ActorNodeName": "some-btu",
+    "FlowChannelName": "some-flow",
+    "HotChannelName": "some-hot-temp",
+    "ColdChannelName": "some-cold-temp",
+    "CtChannelName": "some-ct",
+    "GallonsPerPulse": 0.0009, 
+    "AsyncCaptureDeltaGpmX100": 10, 
+    "AsyncCaptureDeltaCelsiusX100": 20,
+    "AsyncCaptureDeltaCtVoltsX100": 20, 
+    "TypeName": "btu.params", 
+    "Version": "100"
+}
