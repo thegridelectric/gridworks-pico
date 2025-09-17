@@ -1,3 +1,5 @@
+# Code used when we had a single module using 2 picos
+
 import machine
 import utime
 import network
