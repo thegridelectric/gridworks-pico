@@ -16,6 +16,7 @@ import gc
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 
+BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
 DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS = 500
@@ -43,6 +44,7 @@ class TankModule3:
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
         # Load configuration files
+        self.base_url_failed = False
         self.load_comms_config()
         self.load_app_config()
         # Measuring and repoting voltages
@@ -71,29 +73,6 @@ class TankModule3:
     # Communication
     # ---------------------------------
                                                                  
-    def load_comms_config(self):
-        '''Load the communication configuration file (WiFi/Ethernet and API base URL)'''
-        try:
-            with open(COMMS_CONFIG_FILE, "r") as f:
-                comms_config = ujson.load(f)
-        except (OSError, ValueError) as e:
-            raise RuntimeError(f"Error loading comms_config file: {e}")
-        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
-        self.wifi_name = comms_config.get("WifiName", None)
-        self.wifi_password = comms_config.get("WifiPassword", None)
-        self.base_url = comms_config.get("BaseUrl")
-        if self.wifi_or_ethernet=='wifi':
-            if self.wifi_name is None:
-                raise KeyError("WifiName not found in comms_config.json")
-            if self.wifi_password is None:
-                raise KeyError("WifiPassword not found in comms_config.json")
-        elif self.wifi_or_ethernet=='ethernet':
-            pass
-        else:
-            raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
-        if self.base_url is None:
-            raise KeyError("BaseUrl not found in comms_config.json")
-        
     def connect_to_wifi(self):
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
@@ -123,6 +102,170 @@ class TankModule3:
                     raise RuntimeError("Failed to connect to Ethernet (timeout)")
                 utime.sleep(0.5)
         print("Connected to Ethernet")
+
+    def post_with_fallback(self, endpoint, payload):
+        headers = {'Content-Type': 'application/json'}
+        json_payload = ujson.dumps(payload)
+
+        # Check if it's time to retry base_url
+        if self.base_url_failed:
+            time_since_last_retry = utime.time() - self.last_base_url_retry
+            if time_since_last_retry > BASE_URL_RETRY_SECONDS:
+                self.last_base_url_retry = utime.time()
+                # Quick test of base_url
+                if self._test_url(self.base_url):
+                    self.base_url_failed = False
+
+        url = self.backup_url if self.base_url_failed else self.base_url
+
+        try:
+            response = urequests.post(url+endpoint, data=json_payload, headers=headers, timeout=5)
+            if response.status_code == 200:
+                return response
+            response.close()
+        except Exception as e:
+            if url == self.base_url:
+                if not self._test_url(self.base_url):
+                    self.base_url_failed = True
+                    self.last_base_url_retry = utime.time()
+                    try:
+                        self.send_baseurl_failure_alert()
+                    except Exception:
+                        pass
+                print(f"{url} not reachable!")
+                if self.backup_url:
+                    try:
+                        return  urequests.post(self.backup_url+endpoint, data=json_payload, headers=headers, timeout=5)
+                    except Exception:
+                        return None
+
+        return None
+
+    def send_baseurl_failure_alert(self, message):
+        alert_payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "BaseUrl": self.base_url,
+            "Message": message,
+            "TypeName": "baseurl.failure.alert",
+            "Version": "100"
+        }
+
+        if self.backup_url:
+            try:
+                url = self.backup_url + f"/{self.actor_node_name}/baseurl-failure-alert"
+                headers = {'Content-Type': 'application/json'}
+                response = urequests.post(url, data=ujson.dumps(alert_payload), headers=headers, timeout=3)
+                response.close()
+            except:
+                pass
+
+    def update_code(self):
+        endpoint = f"/{self.actor_node_name}/code-update"
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "TypeName": "new.code",
+            "Version": "100"
+        }
+        response = self.post_with_fallback(endpoint, payload)
+        if response and response.status_code == 200:
+            try:
+                ujson.loads(response.content.decode('utf-8'))
+            except:
+                python_code = response.content
+                with open('main_update.py', 'wb') as file:
+                    file.write(python_code)
+                machine.reset()
+
+    def load_comms_config(self):
+        try:
+            with open(COMMS_CONFIG_FILE, "r") as f:
+                comms_config = ujson.load(f)
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"Error loading comms_config file: {e}")
+        self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.wifi_name = comms_config.get("WifiName", None)
+        self.wifi_password = comms_config.get("WifiPassword", None)
+        self.base_url = comms_config.get("BaseUrl", None)
+        self.backup_url = comms_config.get("BackupUrl", None)
+        if self.wifi_or_ethernet=='wifi':
+            if self.wifi_name is None:
+                raise KeyError("WifiName not found in comms_config.json")
+            if self.wifi_password is None:
+                raise KeyError("WifiPassword not found in comms_config.json")
+        elif self.wifi_or_ethernet=='ethernet':
+            pass
+        else:
+            raise KeyError("WifiOrEthernet must exost amd be either 'wifi' or 'ethernet' in comms_config.json")
+        if self.base_url is None:
+            raise KeyError("BaseUrl not found in comms_config.json")
+
+    def _test_url(self, url):
+        #Test if a URL is reachable#
+        try:
+            test = url + "/ping"
+            response = urequests.get(test, timeout=3)
+            success = response.status_code == 200
+            response.close()
+            return success
+        except:
+            return False
+
+    def update_comms_config(self):
+        endpoint = f"/{self.actor_node_name}/pico-comms-params"
+        payload = {
+            "HwUid": self.hw_uid,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
+            "TypeName": "pico.comms.params",
+            "Version": "000"
+        }
+        response = None
+        try:
+            response = self.post_with_fallback(endpoint, payload)
+            print(f"response in update_comms_config is {response}")
+            if response and response.status_code == 200:
+                new_config = response.json()
+                 #Track if we made changes
+                config_changed = False
+                # Only update if the new URLs actually work
+                new_base = new_config.get("BaseUrl", self.base_url)
+                if new_base != self.base_url and self._test_url(new_base):
+                    self.base_url = new_base
+                    config_changed = True
+
+                # Only update BackupUrl if different and working
+                new_backup = new_config.get("BackupUrl", self.backup_url)
+                if new_backup != self.backup_url and self._test_url(new_backup):
+                    old_backup = self.backup_url
+                    self.backup_url = new_backup
+                    config_changed = True
+
+                if config_changed:
+                    self.save_comms_config()
+
+        except Exception as e:
+            print(f"Config update error: {e}")
+        finally:
+            if response and response.status_code == 200:
+                response.close()
+
+    def save_comms_config(self):
+        config = {
+            "WifiOrEthernet": self.wifi_or_ethernet,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
+            "TypeName": "pico.comms.config",
+            "Version": "000"
+        }
+        if self.wifi_or_ethernet == "wifi":
+            config["WifiName"] = self.wifi_name
+            config["WifiPassword"] = self.wifi_password
+
+        with open(COMMS_CONFIG_FILE, "w") as f:
+            ujson.dump(config, f)
+
 
     # ---------------------------------
     # Parameters
@@ -156,7 +299,7 @@ class TankModule3:
             ujson.dump(config, f)
     
     def update_app_config(self):
-        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
+        endpoint = f"/{self.actor_node_name}/tank-module-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -167,47 +310,16 @@ class TankModule3:
             "TypeName": "tank.module.params",
             "Version": "110"
         }
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            if response.status_code == 200:
-                updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.samples = updated_config.get("Samples", self.samples)
-                self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
-                self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                self.save_app_config()
-            response.close()
-        except Exception as e:
-            print(f"Error sending tank module params: {e}")
-
-    # ---------------------------------
-    # Code updates
-    # ---------------------------------
-
-    def update_code(self):
-        url = self.base_url + f"/{self.actor_node_name}/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "100"
-        }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
+        response = self.post_with_fallback(endpoint, payload)
+        if response and response.status_code == 200:
+            updated_config = response.json()
+            self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
+            self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
+            self.samples = updated_config.get("Samples", self.samples)
+            self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
+            self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
+            self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+            self.save_app_config()
 
     # ---------------------------------
     # Measuring microvolts
@@ -254,7 +366,7 @@ class TankModule3:
     # ---------------------------------
 
     def post_microvolts(self, idx=3):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
+        endpoint = f"/{self.actor_node_name}/microvolts"
         if idx==0:
             mv_list = [self.mv0]
         elif idx==1:
@@ -270,13 +382,12 @@ class TankModule3:
             "TypeName": "microvolts", 
             "Version": "100"
         }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
+
         try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
+            response = self.post_with_fallback(endpoint, payload)
         except Exception as e:
             print(f"Error posting microvolts: {e}")
+
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
@@ -315,8 +426,12 @@ class TankModule3:
             self.connect_to_wifi()
         elif self.wifi_or_ethernet=='ethernet':
             self.connect_to_ethernet()
-        self.update_code()
+
+        # Update configurations
+        self.update_comms_config()
         self.update_app_config()
+        self.update_code()
+
         self.set_names()
         self.mv0 = self.adc0_micros()
         self.mv1 = self.adc1_micros()
