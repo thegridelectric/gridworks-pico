@@ -359,7 +359,7 @@ class BtuMeter:
     
     def update_app_config(self):
         #Post current parameters, and update parameters based on the server response
-        endpoint = f"/{self.actor_node_name}/btu-params"
+        endpoint = f"/{self.actor_node_name}/ticklist-btu-params"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
@@ -371,7 +371,7 @@ class BtuMeter:
             "PublishEmptyTicklistAfterS": self.publish_empty_ticklist_after_s,
             # TEMP
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-            "TypeName": "btu.params",
+            "TypeName": "ticklist.btu.params",
             "Version": "000"
         }
 
@@ -446,7 +446,7 @@ class BtuMeter:
             node_names = [self.cold_temp_name, self.hot_temp_name]
             mv_lists = [self.cold_list, self.hot_list]
             ts_lists = [self.cold_ts_list, self.hot_ts_list]
-        endpoint =  f"/{self.actor_node_name}/btu-data"
+        endpoint =  f"/{self.actor_node_name}/ticklist-btu-data"
         if len(self.relative_us_list_list)>1:
             if len(self.relative_us_list_list[0])<2 and len(self.relative_us_list_list[1])>0:
                 self.relative_us_list_list = self.relative_us_list_list[1:]
@@ -459,7 +459,7 @@ class BtuMeter:
             "AboutNodeNameList": node_names,
             "MicroVoltsLists": mv_lists,
             "MicroVoltsTimestampsLists": ts_lists,
-            "TypeName": "btu.data", 
+            "TypeName": "ticklist.btu.data", 
             "Version": "100"
             }
         
