@@ -17,6 +17,9 @@ and then
  picotool load 	Wiz-Pico2_2aaf30.uf2
  ```
 
+After plugging back in:
+In Thonny go to Tools -> manage packages -> 
+
  ## Features
 
  - MicroPython v1.27.0-preview.83
