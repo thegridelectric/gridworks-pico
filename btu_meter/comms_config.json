@@ -1,0 +1,7 @@
+{
+    "BaseUrl": "http://192.168.2.200:8000", 
+    "BackupUrl": "http://beech.local:8000", 
+    "WifiOrEthernet": "wifi", 
+    "WifiName": "SSID",
+    "WifiPassword": "PASS"
+}

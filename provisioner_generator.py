@@ -270,7 +270,7 @@ elif 'main_revert.py' in os.listdir():
     # Write app_config.json and main code
     # -------------------------
     while True:
-        device_type = input("Is this Pico associated to a TankModule (enter '0') or a BtuMeter (enter '1'): ")
+        device_type = input("Is this Pico associated to a TankModule3 (enter '0') or an AsyncBtuMeter (enter '1'): ")
         if device_type in {'0', '1'}:
             break
         print('Please enter 0 or 1.')
@@ -296,8 +296,8 @@ elif 'main_revert.py' in os.listdir():
 
 with open('tank_module/tank_module_3_main.py', 'r') as file:
     tank_module_3_main = file.read()
-with open('btu_meter/btu_main.py', 'r') as file:
-    btu_meter_main = file.read()
+with open('btu_meter/async_btu_main.py', 'r') as file:
+    async_btu_main = file.read()
 
 if __name__ == "__main__":
     with open('provisioner.py', 'w') as file:
@@ -305,5 +305,5 @@ if __name__ == "__main__":
         file.write(step2)
         file.write(tank_module_3_main)
         file.write(step3)
-        file.write(btu_meter_main)
+        file.write(async_btu_main)
         file.write(step4)
