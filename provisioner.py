@@ -1445,13 +1445,13 @@ elif 'main_revert.py' in os.listdir():
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
             "WifiPassword": wifi_pass, 
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "BaseUrl": f"http://{ip_address}:8000",
             "BackupUrl": backup_url
         }
     elif wifi_or_ethernet=='e':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "BaseUrl": f"http://{ip_address}:8000",
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
