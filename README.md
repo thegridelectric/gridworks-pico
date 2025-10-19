@@ -7,13 +7,16 @@ GridWorks micropython code for sensors/actuators running on some variant of the 
 ### 1. Loading Micropython and packages
 
 **Load Micropython**
+In all cases, we use the `Thonny` IDE to do the 
 - **Wiznet W5500-EVB-Pico2** (built on RP2350)
   - Follow instructions at [firmware/W5500-EVB-Pico2/README.md](firmware/W5500-EVB-Pico2/README.md)
 - **Wiznet W5500-EVB-Pico** 
   - Press and hold the bootsel button (**closest to edge of board**)
-  - Click the bottom right menu bar, and click "Install Micropython..."
   - Plug in the Pico to a computer and open Thonny
-  - Select RPi 2040 and the variant of  W5500-EVB-Pico with RP2040
+  - Click the bottom right menu bar, and click "Install Micropython..."
+  - Keep MicroPython family as `RP2`
+  - From `variant` select `Wiznet *  W5500-EVB-Pico` (bottom of the list)
+  - Click Install
 - **Wifi Pico** 
   - Plug in the Pico to a computer and open Thonny
   - Select from the Thonny dropdown menus: "Raspberry Pi - Pico W / Pico WH"
