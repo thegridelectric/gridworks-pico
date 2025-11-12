@@ -2,6 +2,7 @@
 
 Custom MicroPython firmware for the Wiznet W5500-EVB-Pico2 board (RP2350-based) with integrated Ethernet support.
 
+
 ## Quick Start
  0. `brew install picotool` 
 
@@ -10,7 +11,8 @@ and then
  1. Hold BOOTSEL button while connecting the Pico2 to USB
  2. Navigate to this directory.
  3. Confirm the RP2350 drive exists
- 4. load code:
+ 4. Make sure the `Wiz-Pico2_2aaf30.uf2` in this directory is loaded on your desktop
+ 5. load code:
 
  ```
  ls /Volumes
