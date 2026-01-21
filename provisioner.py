@@ -6,7 +6,7 @@ import urequests
 import ubinascii
 import os
 
-PRIMARY_SCADA_IP = "192.168.0.200"
+PRIMARY_SCADA_IP = "192.168.2.200"
 
 # Remove existing files
 if 'boot.py' in os.listdir():

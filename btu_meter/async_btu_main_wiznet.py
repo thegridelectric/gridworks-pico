@@ -95,28 +95,10 @@ class AsyncBtuMeter:
         self.avg_double = 20000
         self.last_pulse_us = None
         self.toss_measurement = False
+
+        self.last_nic_restart_s = 0
+        self.last_comms_success_s = utime.time()
                                                                  
-
-    def connect_to_ethernet(self):
-        self.nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
-
     def post_json(self, endpoint: str, payload: dict):
         """POST JSON and return parsed JSON dict on 200; else None."""
         url = self.base_url + endpoint
@@ -129,6 +111,7 @@ class AsyncBtuMeter:
             if resp.status_code != 200:
                 return None
             # Parse while still open
+            self.last_comms_success_s = utime.time()
             return resp.json()
         except Exception as e:
             print(f"POST JSON failed: {e}")
@@ -219,7 +202,7 @@ class AsyncBtuMeter:
         self.gallons_per_pulse = app_config.get("GallonsPerPulse", DEFAULT_GALLONS_PER_PULSE)
         self.async_capture_delta_gpm_x_100 = app_config.get("AsyncCaptureDeltaGpmX100", DEFAULT_ASYNC_CAPTURE_DELTA_GPM_X_100)
         self.async_capture_delta_celsius_x_100 = app_config.get("AsyncCaptureDeltaCelsiusX100", DEFAULT_ASYNC_CAPTURE_DELTA_CELSIUS_X_100)
-        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100",DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
+        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100", DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
 
     def save_app_config(self):
 
@@ -266,7 +249,7 @@ class AsyncBtuMeter:
         }
         updated_config = self.post_json(endpoint, payload)
         if not updated_config:
-            return
+            return False
 
         self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
         self.hot_channel_name = updated_config.get("HotChannelName", self.hot_channel_name)
@@ -293,6 +276,7 @@ class AsyncBtuMeter:
 
         self.async_capture_delta_ct_volts_x_100 = updated_config.get("AsyncCaptureDeltaCtVoltsX100", self.async_capture_delta_ct_volts_x_100)
         self.save_app_config()
+        return True
 
     def celsius_from_volts(self, volts):
         #  Uses Beta formula with THERMISTOR_BETA of 3977
@@ -552,7 +536,6 @@ class AsyncBtuMeter:
         now_s = utime.time()
         time_since_sync = now_s  - self.last_sync_report_s
         send_sync = time_since_sync >= self.capture_period_s
-
         flow_val = self.gpm
         flow_unit = "GpmTimes100"
         if self.send_hz:
@@ -673,7 +656,48 @@ class AsyncBtuMeter:
             mode=machine.Timer.PERIODIC,
             callback=self.manage_flow
         )
-        
+
+    def restart_nic(self):
+        try:
+            self.nic.active(False)
+            utime.sleep(1)
+            self.nic.active(True)
+            self.nic.ifconfig('dhcp')
+        except Exception as e:
+            print(f"NIC restart failed: {e}")
+            machine.reset()
+
+    def connect_to_ethernet(self):
+        self.nic = network.WIZNET5K()
+
+        for attempt in range(5):
+            try:
+                print(f"trying to connect, attempt {attempt}")
+                self.nic.active(True)
+                break
+            except Exception as e:
+                print(f"Retrying NIC activation due to: {e}")
+                utime.sleep(0.5)
+
+        # Always try DHCP, even if link is not ready yet
+        try:
+            self.nic.ifconfig('dhcp')
+        except Exception as e:
+            print(f"DHCP start failed: {e}")
+            return False
+
+        # Non-fatal wait for link
+        start = utime.time()
+        while utime.time() - start < 10:
+            if self.nic.isconnected():
+                print("Connected to Ethernet")
+                self.last_comms_success_s = utime.time()
+                return True
+            utime.sleep(0.5)
+
+        print("Ethernet not connected yet — continuing anyway")
+        return False
+
     def main_loop(self):
 
         try:
@@ -692,6 +716,18 @@ class AsyncBtuMeter:
                 self.report()
                 self.pending_async_check = False
 
+            now = utime.time()
+            STALL_S = int(2.1 * self.capture_period_s)
+            if (
+                now - self.last_comms_success_s > STALL_S
+               and now - self.last_nic_restart_s > STALL_S
+            ):
+                print(f"Comms stalled > {STALL_S}s - restarting NIC")
+                self.last_nic_restart_s = now
+                self.restart_nic()
+                ok = self.update_app_config() 
+                if not ok:
+                    print("Probe failed after NIC restart")
             utime.sleep_ms(10) 
 
     def start(self):
