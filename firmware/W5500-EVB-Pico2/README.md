@@ -1,7 +1,7 @@
 # W5500-EVB-Pico2 MicroPython Firmware
 
 Custom MicroPython firmware for the Wiznet W5500-EVB-Pico2 board (RP2350-based) with integrated Ethernet support.
-
+You will need a usbc - usbc data chord.
 
 ## Quick Start
 
@@ -14,7 +14,7 @@ Custom MicroPython firmware for the Wiznet W5500-EVB-Pico2 board (RP2350-based) 
    `cd $path/gridworks-pico/firmware/W5500-EVB-Pico2/`
 and then
 
- 2. Hold BOOTSEL button while connecting the Pico2 to USB
+ 2. Hold BOOTSEL button while connecting the Pico2 to USB (the one _closer_ to the USB-C)
 
  3. Confirm the RP2350 drive exists: `ls /Volumes`
  4. load code:
