@@ -11,6 +11,8 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 DEFAULT_ACTOR_NAME = "primary-btu"
 
+ADC_REF_V = 2.95
+
 BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_GALLONS_PER_PULSE = 0.0009
@@ -31,7 +33,7 @@ class AsyncBtuMeter:
     #
     # self.read_ct is True iff CtNodeName is not None
 
-    PULSE_PIN = 21
+    PULSE_PIN = 22
     ADC0_PIN = 26 # Hot Temp
     ADC1_PIN = 27 # Cold Temp
     ADC2_PIN = 28 # Current Transformer
@@ -469,7 +471,7 @@ class AsyncBtuMeter:
         if volts <= 0.001 or volts >= 3.299:
             return None
         # Use Beta Formula
-        r_therm = 1 / ((3.3 / volts - 1) / self.R_FIXED_KOHMS)
+        r_therm = 1 / ((ADC_REF_V / volts - 1) / self.R_FIXED_KOHMS)
         thermistor_beta = self.thermistor_beta
         if thermistor_beta is None or thermistor_beta == 0:
             thermistor_beta = DEFAULT_THERMISTOR_BETA
@@ -482,7 +484,8 @@ class AsyncBtuMeter:
             for _ in range(n_samples):
                 reading_sum += adc_channel.read_u16()
             avg_reading = reading_sum / n_samples
-            avg_voltage =  avg_reading * 3.3 / 65535
+            avg_voltage =  avg_reading * ADC_REF_V / 65535
+            print(f"avg voltage is {avg_voltage}")
             return self.celsius_from_volts(avg_voltage)
         except Exception as e:
             print(f"Temp measurement failed: {e}")
