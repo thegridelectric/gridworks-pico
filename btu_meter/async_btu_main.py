@@ -11,7 +11,7 @@ COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 DEFAULT_ACTOR_NAME = "primary-btu"
 
-ADC_REF_V = 2.95
+ADC_REF_V = 3.3
 
 BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 DEFAULT_CAPTURE_PERIOD_S = 60

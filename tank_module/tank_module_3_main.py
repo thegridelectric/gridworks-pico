@@ -23,6 +23,8 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
+ADC_REF_V = 3.3
+
 # Other constants
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
@@ -220,7 +222,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc0.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
@@ -232,7 +234,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
@@ -244,7 +246,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc2.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)  
