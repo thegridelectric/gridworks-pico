@@ -10,7 +10,7 @@ import random
 import _thread
 
 class SquareWaveGenerator:
-    def __init__(self, pin_num=15, base_freq=50, deviation=2, base_duty_cycle=50, duty_deviation=5):
+    def __init__(self, pin_num=2, base_freq=50, deviation=2, base_duty_cycle=50, duty_deviation=5):
         """
         Initialize the square wave generator
         
@@ -50,6 +50,9 @@ class SquareWaveGenerator:
         
     def _generate_wave(self):
         """Main wave generation loop - runs in separate thread"""
+        # Initialize timing - use absolute target times to compensate for loop overhead
+        next_edge_time = utime.ticks_us()
+        
         while self.running:
             # Calculate this pulse's frequency with random deviation
             deviation_amount = random.uniform(-self.deviation, self.deviation)
@@ -66,26 +69,29 @@ class SquareWaveGenerator:
             # Clamp duty cycle to valid range (5% to 95% to avoid extreme cases)
             pulse_duty_cycle = max(5, min(95, pulse_duty_cycle))
             
-            # Calculate full period in microseconds
-            period_us = int(1000000 / pulse_freq)
+            # Calculate full period in microseconds (use float for precision)
+            period_us = 1000000.0 / pulse_freq
             
             # Calculate high and low times based on duty cycle
-            high_time_us = int(period_us * pulse_duty_cycle / 100)
+            high_time_us = period_us * pulse_duty_cycle / 100.0
             low_time_us = period_us - high_time_us
             
-            # Generate one complete pulse (high then low)
-            start_time = utime.ticks_us()
+            # Calculate absolute target times for this pulse
+            high_end_time = next_edge_time + int(high_time_us)
+            low_end_time = high_end_time + int(low_time_us)
             
-            # High phase
+            # High phase - wait until target time
             self.pin.value(1)
-            while utime.ticks_diff(utime.ticks_us(), start_time) < high_time_us:
+            while utime.ticks_diff(high_end_time, utime.ticks_us()) > 0:
                 pass
             
-            # Low phase
-            mid_time = utime.ticks_us()
+            # Low phase - wait until target time
             self.pin.value(0)
-            while utime.ticks_diff(utime.ticks_us(), mid_time) < low_time_us:
+            while utime.ticks_diff(low_end_time, utime.ticks_us()) > 0:
                 pass
+            
+            # Set next edge time (this compensates for any timing drift)
+            next_edge_time = low_end_time
             
             self.pulse_count += 1
         
@@ -127,7 +133,7 @@ def main():
     """Main program - demonstrates the square wave generator"""
     
     # Configuration
-    OUTPUT_PIN = 15          # GPIO pin for square wave output
+    OUTPUT_PIN = 2           # GPIO pin for square wave output
     BASE_FREQUENCY = 50      # Base frequency in Hz (50 Hz)
     DEVIATION = 2            # Deviation in Hz (+/- 2 Hz)
     BASE_DUTY_CYCLE = 50     # Base duty cycle (50% high, 50% low)
