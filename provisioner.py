@@ -28,6 +28,7 @@ def write_tank_module_3_main():
     main_code = """
 
 import machine
+from machine import Pin
 import utime
 import network
 import ujson
@@ -51,6 +52,8 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
+ADC_REF_V = 3.3
+
 # Other constants
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
@@ -66,7 +69,11 @@ class TankModule3:
         # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
-        # Pins
+        # Release any ADC pull-down/pull-up resistors
+        Pin(26, Pin.IN)
+        Pin(27, Pin.IN)
+        Pin(28, Pin.IN)
+        # Set Pin as ADC
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
@@ -248,7 +255,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc0.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
@@ -260,7 +267,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)
@@ -272,7 +279,7 @@ class TankModule3:
             for _ in range(self.samples):
                 # Read the raw ADC value (0-65535)
                 readings.append(self.adc2.read_u16())
-            voltages = list(map(lambda x: x * 3.3 / 65535, readings))
+            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
             mean_1000 = int(10**6 * sum(voltages) / self.samples)
             sample_averages.append(mean_1000)
         return int(sum(sample_averages)/self.num_sample_averages)  
@@ -366,6 +373,7 @@ if __name__ == "__main__":
 def write_btu_meter_main():
     main_code = """
 import machine
+from machine import Pin
 import utime
 import math
 import network
@@ -377,6 +385,8 @@ import ubinascii
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
 DEFAULT_ACTOR_NAME = "primary-btu"
+
+ADC_REF_V = 3.3
 
 BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 DEFAULT_CAPTURE_PERIOD_S = 60
@@ -398,7 +408,7 @@ class AsyncBtuMeter:
     #
     # self.read_ct is True iff CtNodeName is not None
 
-    PULSE_PIN = 21
+    PULSE_PIN = 22
     ADC0_PIN = 26 # Hot Temp
     ADC1_PIN = 27 # Cold Temp
     ADC2_PIN = 28 # Current Transformer
@@ -418,8 +428,13 @@ class AsyncBtuMeter:
         self.load_app_config()
 
         # Hardware setup
+        # Release any ADC pull-down/pull-up resistors
+        Pin(26, Pin.IN)
+        Pin(27, Pin.IN)
+        Pin(28, Pin.IN)
         self.pulse_pin = machine.Pin(self.PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.adc_hot = machine.ADC(self.ADC0_PIN)
+
         self.adc_cold = machine.ADC(self.ADC1_PIN)
         self.adc_ct = machine.ADC(self.ADC2_PIN)
 
@@ -836,7 +851,7 @@ class AsyncBtuMeter:
         if volts <= 0.001 or volts >= 3.299:
             return None
         # Use Beta Formula
-        r_therm = 1 / ((3.3 / volts - 1) / self.R_FIXED_KOHMS)
+        r_therm = 1 / ((ADC_REF_V / volts - 1) / self.R_FIXED_KOHMS)
         thermistor_beta = self.thermistor_beta
         if thermistor_beta is None or thermistor_beta == 0:
             thermistor_beta = DEFAULT_THERMISTOR_BETA
@@ -849,7 +864,8 @@ class AsyncBtuMeter:
             for _ in range(n_samples):
                 reading_sum += adc_channel.read_u16()
             avg_reading = reading_sum / n_samples
-            avg_voltage =  avg_reading * 3.3 / 65535
+            avg_voltage =  avg_reading * ADC_REF_V / 65535
+            print(f"avg voltage is {avg_voltage}")
             return self.celsius_from_volts(avg_voltage)
         except Exception as e:
             print(f"Temp measurement failed: {e}")
@@ -1445,13 +1461,13 @@ elif 'main_revert.py' in os.listdir():
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
             "WifiPassword": wifi_pass, 
-            "BaseUrl": f"http://{ip_address}:8000",
+            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
             "BackupUrl": backup_url
         }
     elif wifi_or_ethernet=='e':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": f"http://{ip_address}:8000",
+            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
