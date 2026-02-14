@@ -1,264 +1,478 @@
 """
-Raspberry Pi Pico W - Sensor reader with JSON comunication template
+Raspberry Pi Pico W - JSON Communication Protocol
+Template for sending sensor data as JSON packets over serial or MQTT
 """
 
 from machine import Pin, ADC
 import utime
 import math
 import json
+import os
+
+
+# ========== CONFIGURATION LOADER ==========
+class ConfigLoader:
+    def __init__(self, ConfigFilePath="config.json"):
+        """
+        Load configuration from JSON file
+        
+        Args:
+            ConfigFilePath: Path to configuration JSON file
+        """
+        self.ConfigFilePath = ConfigFilePath
+        self.Config = self.LoadConfig()
+        
+    def LoadConfig(self):
+        """
+        Load configuration from JSON file
+        
+        Returns:
+            Configuration dictionary
+        """
+        try:
+            with open(self.ConfigFilePath, 'r') as f:
+                Config = json.load(f)
+                print(f"✓ Configuration loaded from {self.ConfigFilePath}")
+                return Config
+        except OSError:
+            print(f"✗ Config file not found: {self.ConfigFilePath}")
+            print("  Using default configuration")
+            return self.GetDefaultConfig()
+        except ValueError as e:
+            print(f"✗ Invalid JSON in config file: {e}")
+            print("  Using default configuration")
+            return self.GetDefaultConfig()
+    
+    def GetDefaultConfig(self):
+        """
+        Return default configuration if file not found or invalid
+        
+        Returns:
+            Default configuration dictionary
+        """
+        return {
+            "DeviceIdentity": {
+                "DeviceId": "btuMeter_01",
+                "Location": "Unknown"
+            },
+            "HardwareCalibration": {
+                "KFlowFactor": 0.15,
+                "ThermistorR1": 10000,
+                "ThermistorR2Nominal": 10000,
+                "ThermistorBCoefficient": 3977,
+                "ThermistorTNominal": 25
+            },
+            "FluidProperties": {
+                "SpecificHeat": 4.186,
+                "Density": 1000
+            },
+            "MeasurementTiming": {
+                "MeasurementInterval": 1.0,
+                "TransmissionInterval": 10.0
+            },
+            "ChangeDetection": {
+                "EnableChangeDetection": True,
+                "DeltaTThreshold": 1.0,
+                "FlowThreshold": 1.0
+            },
+            "GpioPins": {
+                "FreqPin": 22,
+                "Temp1Pin": 26,
+                "Temp2Pin": 27
+            },
+            "MqttSettings": {
+                "Enabled": False,
+                "Broker": "mqtt.example.com",
+                "Port": 1883,
+                "Topic": "sensors/btu_meter",
+                "Username": "",
+                "Password": ""
+            }
+        }
+    
+    def SaveConfig(self, Config):
+        """
+        Save configuration to JSON file
+        
+        Args:
+            Config: Configuration dictionary to save
+        """
+        try:
+            with open(self.ConfigFilePath, 'w') as f:
+                # MicroPython json.dump doesn't support indent
+                json.dump(Config, f)
+            print(f"✓ Configuration saved to {self.ConfigFilePath}")
+            return True
+        except Exception as e:
+            print(f"✗ Failed to save config: {e}")
+            return False
+    
+    def PrintConfig(self):
+        """Print current configuration in readable format"""
+        print("\n" + "=" * 60)
+        print("CURRENT CONFIGURATION")
+        print("=" * 60)
+        
+        # MicroPython json.dumps doesn't support indent parameter
+        # Print sections manually for readability
+        print("Device Identity:")
+        for key, value in self.Config["DeviceIdentity"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nHardware Calibration:")
+        for key, value in self.Config["HardwareCalibration"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nFluid Properties:")
+        for key, value in self.Config["FluidProperties"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nMeasurement Timing:")
+        for key, value in self.Config["MeasurementTiming"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nChange Detection:")
+        for key, value in self.Config["ChangeDetection"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nGPIO Pins:")
+        for key, value in self.Config["GpioPins"].items():
+            print(f"  {key}: {value}")
+        
+        print("\nMQTT Settings:")
+        for key, value in self.Config["MqttSettings"].items():
+            print(f"  {key}: {value}")
+        
+        print("=" * 60 + "\n")
 
 
 # ========== THERMISTOR READER CLASS ==========
 class ThermistorReader:
-    def __init__(self, adc_pin, r1=10000, r2_nominal=10000, 
-                 t_nominal=25, b_coefficient=3977, vref=3.3):
-        self.adc = ADC(Pin(adc_pin))
-        self.r1 = r1
-        self.r2_nominal = r2_nominal
-        self.t_nominal = t_nominal
-        self.b_coefficient = b_coefficient
-        self.vref = vref
-        self.adc_max = 4095
+    def __init__(self, AdcPin, R1=10000, R2Nominal=10000, 
+                 TNominal=25, BCoefficient=3977, VRef=3.3):
+        self.Adc = ADC(Pin(AdcPin))
+        self.R1 = R1
+        self.R2Nominal = R2Nominal
+        self.TNominal = TNominal
+        self.BCoefficient = BCoefficient
+        self.VRef = VRef
+        self.AdcMax = 4095
         
-    def read_voltage(self):
-        adc_value = self.adc.read_u16() >> 4
-        voltage = (adc_value / self.adc_max) * self.vref
-        return voltage
+    def ReadVoltage(self):
+        AdcValue = self.Adc.read_u16() >> 4
+        Voltage = (AdcValue / self.AdcMax) * self.VRef
+        return Voltage
     
-    def read_resistance(self):
-        voltage = self.read_voltage()
-        if voltage >= self.vref:
+    def ReadResistance(self):
+        Voltage = self.ReadVoltage()
+        if Voltage >= self.VRef:
             return float('inf')
-        if voltage <= 0:
+        if Voltage <= 0:
             return 0
-        resistance = self.r1 * voltage / (self.vref - voltage)
-        return resistance
+        Resistance = self.R1 * Voltage / (self.VRef - Voltage)
+        return Resistance
     
-    def read_temperature_celsius(self, samples=5):
-        total_resistance = 0
-        for _ in range(samples):
-            total_resistance += self.read_resistance()
-        avg_resistance = total_resistance / samples
+    def ReadTemperatureCelsius(self, Samples=5):
+        TotalResistance = 0
+        for _ in range(Samples):
+            TotalResistance += self.ReadResistance()
+        AvgResistance = TotalResistance / Samples
         
         try:
-            t_nominal_k = self.t_nominal + 273.15
-            inv_t = (1.0 / t_nominal_k) + (1.0 / self.b_coefficient) * math.log(avg_resistance / self.r2_nominal)
-            temp_k = 1.0 / inv_t
-            temp_c = temp_k - 273.15
-            return temp_c
+            TNominalK = self.TNominal + 273.15
+            InvT = (1.0 / TNominalK) + (1.0 / self.BCoefficient) * math.log(AvgResistance / self.R2Nominal)
+            TempK = 1.0 / InvT
+            TempC = TempK - 273.15
+            return TempC
         except (ValueError, ZeroDivisionError):
             return float('nan')
 
 
 # ========== FREQUENCY READER CLASS ==========
 class FrequencyReader:
-    def __init__(self, pin_num=22):
-        self.pin = Pin(pin_num, Pin.IN, Pin.PULL_DOWN)
-        self.pulse_count = 0
-        self.last_measurement_time = utime.ticks_us()
-        self.pin.irq(trigger=Pin.IRQ_RISING, handler=self._pulse_handler)
+    def __init__(self, PinNum=22):
+        self.Pin = Pin(PinNum, Pin.IN, Pin.PULL_DOWN)
+        self.PulseCount = 0
+        self.LastMeasurementTime = utime.ticks_us()
+        self.Pin.irq(trigger=Pin.IRQ_RISING, handler=self._PulseHandler)
         
-    def _pulse_handler(self, pin):
-        self.pulse_count += 1
+    def _PulseHandler(self, pin):
+        self.PulseCount += 1
     
-    def get_frequency(self, reset=True):
-        current_time = utime.ticks_us()
-        elapsed_us = utime.ticks_diff(current_time, self.last_measurement_time)
-        elapsed_sec = elapsed_us / 1_000_000.0
+    def GetFrequency(self, Reset=True):
+        CurrentTime = utime.ticks_us()
+        ElapsedUs = utime.ticks_diff(CurrentTime, self.LastMeasurementTime)
+        ElapsedSec = ElapsedUs / 1_000_000.0
         
-        if elapsed_sec == 0:
+        if ElapsedSec == 0:
             return 0.0
         
-        frequency = self.pulse_count / elapsed_sec
+        Frequency = self.PulseCount / ElapsedSec
         
-        if reset:
-            self.pulse_count = 0
-            self.last_measurement_time = current_time
+        if Reset:
+            self.PulseCount = 0
+            self.LastMeasurementTime = CurrentTime
         
-        return frequency
+        return Frequency
 
 
 # ========== JSON PACKET BUILDER ==========
 class SensorDataPacket:
-    def __init__(self, device_id="PICO_01", k_ff=0.15):
+    def __init__(self, DeviceId="btuMeter", Location="Unknown", KFlowFactor=0.15, Cp=4.186):
         """
         Initialize JSON packet builder
         
         Args:
-            device_id: Unique identifier for this device
-            k_ff: Flow meter calibration constant
+            DeviceId: Unique identifier for this device
+            Location: Device location description
+            KFlowFactor: Flow meter calibration constant (LPM/Hz)
+            Cp: Specific heat capacity of water in J/g°C
         """
-        self.device_id = device_id
-        self.k_ff = k_ff
-        self.packet_sequence = 0
+        self.DeviceId = DeviceId
+        self.Location = Location
+        self.KFlowFactor = KFlowFactor
+        self.Cp = Cp
         
-    def build_packet(self, frequency, temp1_c, temp1_v, temp2_c, temp2_v):
+    def BuildPacket(self, Frequency, Temp1C, Temp2C):
         """
         Build a JSON data packet from sensor readings
         
         Args:
-            frequency: Flow meter frequency in Hz
-            temp1_c: Temperature 1 in Celsius
-            temp1_v: Voltage 1 in volts
-            temp2_c: Temperature 2 in Celsius
-            temp2_v: Voltage 2 in volts
+            Frequency: Flow meter frequency in Hz
+            Temp1C: Temperature 1 in Celsius (inlet)
+            Temp2C: Temperature 2 in Celsius (outlet)
             
         Returns:
             Dictionary (can be serialized to JSON)
         """
-        self.packet_sequence += 1
+        FlowRate = self.KFlowFactor * Frequency  # Flow rate in LPM
         
-        packet = {
-            "device_id": self.device_id,
-            "timestamp": utime.time(),
-            "sequence": self.packet_sequence,
-            "flow": {
-                "frequency_hz": round(frequency, 2),
-                "flow_rate_lpm": round(self.k_ff * frequency, 2)
+        # Calculate instantaneous power in watts
+        MassFlowRateGPerSec = FlowRate * 1000.0 / 60.0
+        DeltaT = Temp1C - Temp2C
+        Watts = MassFlowRateGPerSec * self.Cp * DeltaT
+
+        Packet = {
+            "DeviceId": self.DeviceId,
+            "Location": self.Location,
+            "Timestamp": utime.time(),
+            "Flow": {
+                "FrequencyHz": round(Frequency, 2),
+                "FlowRateLPM": round(FlowRate, 2)
             },
-            "temperature": {
-                "sensor_1": {
-                    "temp_c": round(temp1_c, 2),
-                    "voltage_v": round(temp1_v, 3)
+            "Temperature": {
+                "Sensor1": {
+                    "TempC": round(Temp1C, 2),
                 },
-                "sensor_2": {
-                    "temp_c": round(temp2_c, 2),
-                    "voltage_v": round(temp2_v, 3)
-                }
+                "Sensor2": {
+                    "TempC": round(Temp2C, 2),
+                },
+                "DeltaT": round(DeltaT, 2)
+            },
+            "Energy": {
+                "InstantaneousWatts": round(Watts, 2)
             }
         }
         
-        return packet
+        return Packet
     
-    def build_packet_compact(self, frequency, temp1_c, temp1_v, temp2_c, temp2_v):
-        """
-        Build a compact JSON packet (shorter field names for bandwidth savings)
-        
-        Returns:
-            Dictionary with abbreviated keys
-        """
-        self.packet_sequence += 1
-        
-        packet = {
-            "id": self.device_id,
-            "ts": utime.time(),
-            "seq": self.packet_sequence,
-            "f": round(frequency, 2),           # frequency (Hz)
-            "fr": round(self.k_ff * frequency, 2),  # flow rate (LPM)
-            "t1": round(temp1_c, 2),            # temp 1 (°C)
-            "v1": round(temp1_v, 3),            # voltage 1 (V)
-            "t2": round(temp2_c, 2),            # temp 2 (°C)
-            "v2": round(temp2_v, 3)             # voltage 2 (V)
-        }
-        
-        return packet
-    
-    def to_json_string(self, packet):
-        """
-        Convert packet dictionary to JSON string
-        
-        Args:
-            packet: Dictionary from build_packet() or build_packet_compact()
-            
-        Returns:
-            JSON string
-        """
-        return json.dumps(packet)
+    def ToJsonString(self, Packet):
+        """Convert packet dictionary to JSON string"""
+        return json.dumps(Packet)
 
 
-# ========== INTEGRATED SENSOR SYSTEM WITH JSON ==========
-class SensorSystemWithJSON:
-    def __init__(self, device_id="PICO_01", freq_pin=22, temp1_pin=26, temp2_pin=27, k_ff=0.15):
-        """Initialize sensor system with JSON packet builder"""
-        self.freq_reader = FrequencyReader(pin_num=freq_pin)
-        self.thermistor_1 = ThermistorReader(adc_pin=temp1_pin)
-        self.thermistor_2 = ThermistorReader(adc_pin=temp2_pin)
-        self.packet_builder = SensorDataPacket(device_id=device_id, k_ff=k_ff)
-        
-    def read_and_build_packet(self, compact=False):
+# ========== INTEGRATED BTU METER SYSTEM ==========
+class BTUMeterSystem:
+    def __init__(self, Config):
         """
-        Read all sensors and build JSON packet
+        Initialize BTU meter system from configuration
         
         Args:
-            compact: If True, use compact packet format
-            
-        Returns:
-            Dictionary ready to serialize as JSON
+            Config: Configuration dictionary
         """
-        # Read all sensors
-        frequency = self.freq_reader.get_frequency(reset=True)
-        temp1_c = self.thermistor_1.read_temperature_celsius()
-        temp1_v = self.thermistor_1.read_voltage()
-        temp2_c = self.thermistor_2.read_temperature_celsius()
-        temp2_v = self.thermistor_2.read_voltage()
+        # Extract configuration
+        self.Config = Config
+        DeviceId = Config["DeviceIdentity"]["DeviceId"]
+        Location = Config["DeviceIdentity"]["Location"]
         
-        # Build packet
-        if compact:
-            return self.packet_builder.build_packet_compact(frequency, temp1_c, temp1_v, temp2_c, temp2_v)
-        else:
-            return self.packet_builder.build_packet(frequency, temp1_c, temp1_v, temp2_c, temp2_v)
+        HwCal = Config["HardwareCalibration"]
+        FluidProps = Config["FluidProperties"]
+        Pins = Config["GpioPins"]
+        
+        # Initialize hardware
+        self.FreqReader = FrequencyReader(PinNum=Pins["FreqPin"])
+        
+        self.Thermistor1 = ThermistorReader(
+            AdcPin=Pins["Temp1Pin"],
+            R1=HwCal["ThermistorR1"],
+            R2Nominal=HwCal["ThermistorR2Nominal"],
+            TNominal=HwCal["ThermistorTNominal"],
+            BCoefficient=HwCal["ThermistorBCoefficient"]
+        )
+        
+        self.Thermistor2 = ThermistorReader(
+            AdcPin=Pins["Temp2Pin"],
+            R1=HwCal["ThermistorR1"],
+            R2Nominal=HwCal["ThermistorR2Nominal"],
+            TNominal=HwCal["ThermistorTNominal"],
+            BCoefficient=HwCal["ThermistorBCoefficient"]
+        )
+        
+        self.PacketBuilder = SensorDataPacket(
+            DeviceId=DeviceId,
+            Location=Location,
+            KFlowFactor=HwCal["KFlowFactor"],
+            Cp=FluidProps["SpecificHeat"]
+        )
+        
+        self.KFlowFactor = HwCal["KFlowFactor"]
+        
+        # Change detection
+        self.LastTransmittedDeltaT = 0.0
+        self.LastTransmittedFlowRate = 0.0
+        
+    def MeasureAll(self):
+        """
+        Measure all sensors
+        
+        Returns:
+            Tuple of (Frequency, Temp1C, Temp2C)
+        """
+        Frequency = self.FreqReader.GetFrequency(Reset=True)
+        Temp1C = self.Thermistor1.ReadTemperatureCelsius()
+        Temp2C = self.Thermistor2.ReadTemperatureCelsius()
+        return Frequency, Temp1C, Temp2C
     
-    def read_and_send_json(self, compact=False):
+    def CheckSignificantChange(self, DeltaTThreshold, FlowThreshold):
         """
-        Read sensors and return JSON string
+        Check if temperature delta or flow rate has changed significantly
         
         Args:
-            compact: If True, use compact packet format
+            DeltaTThreshold: Minimum change in delta_T (°C)
+            FlowThreshold: Minimum change in flow rate (LPM)
             
         Returns:
-            JSON string
+            True if significant change detected
         """
-        packet = self.read_and_build_packet(compact=compact)
-        return self.packet_builder.to_json_string(packet)
+        Frequency = self.FreqReader.GetFrequency(Reset=False)
+        Temp1C = self.Thermistor1.ReadTemperatureCelsius()
+        Temp2C = self.Thermistor2.ReadTemperatureCelsius()
+        
+        CurrentDeltaT = Temp1C - Temp2C
+        CurrentFlowRate = self.KFlowFactor * Frequency
+        
+        DeltaTChange = abs(CurrentDeltaT - self.LastTransmittedDeltaT)
+        FlowChange = abs(CurrentFlowRate - self.LastTransmittedFlowRate)
+        
+        if DeltaTChange >= DeltaTThreshold or FlowChange >= FlowThreshold:
+            self.LastTransmittedDeltaT = CurrentDeltaT
+            self.LastTransmittedFlowRate = CurrentFlowRate
+            return True
+        
+        return False
+    
+    def GetJsonString(self, Frequency, Temp1C, Temp2C):
+        """Get JSON string from sensor readings"""
+        Packet = self.PacketBuilder.BuildPacket(Frequency, Temp1C, Temp2C)
+        return self.PacketBuilder.ToJsonString(Packet)
 
 
 def main():
-    """Demonstration of JSON packet generation"""
+    """Main program with configuration file"""
     
-    DEVICE_ID = "PICO_01"
-    FREQ_PIN = 22
-    TEMP1_PIN = 26
-    TEMP2_PIN = 27
-    K_FF = 0.15
-    MEASUREMENT_INTERVAL = 1.0
-    USE_COMPACT_FORMAT = False  # Set to True for compact packets
+    print("\n" + "=" * 80)
+    print("BTU METER - Raspberry Pi Pico W")
+    print("=" * 80 + "\n")
     
-    print("=" * 80)
-    print("JSON Communication Protocol Demo - Raspberry Pi Pico W")
-    print("=" * 80)
-    print(f"Device ID: {DEVICE_ID}")
-    print(f"Packet Format: {'Compact' if USE_COMPACT_FORMAT else 'Standard'}")
-    print("=" * 80)
-    print()
+    # Load configuration
+    ConfigLoader_obj = ConfigLoader("config.json")
+    Config = ConfigLoader_obj.Config
     
-    # Initialize sensor system
-    sensors = SensorSystemWithJSON(
-        device_id=DEVICE_ID,
-        freq_pin=FREQ_PIN,
-        temp1_pin=TEMP1_PIN,
-        temp2_pin=TEMP2_PIN,
-        k_ff=K_FF
-    )
+    # Print configuration
+    ConfigLoader_obj.PrintConfig()
     
-    print("Generating JSON packets...")
+    # Extract timing settings
+    MeasurementInterval = Config["MeasurementTiming"]["MeasurementInterval"]
+    TransmissionInterval = Config["MeasurementTiming"]["TransmissionInterval"]
+    
+    # Extract change detection settings
+    ChangeDetection = Config["ChangeDetection"]
+    EnableChangeDetection = ChangeDetection["EnableChangeDetection"]
+    DeltaTThreshold = ChangeDetection["DeltaTThreshold"]
+    FlowThreshold = ChangeDetection["FlowThreshold"]
+    
+    # Initialize BTU meter
+    print("Initializing BTU meter...")
+    BtuMeter = BTUMeterSystem(Config)
+    print("✓ BTU meter initialized\n")
+    
+    print("Configuration Summary:")
+    print(f"  Device ID: {Config['DeviceIdentity']['DeviceId']}")
+    print(f"  Location: {Config['DeviceIdentity']['Location']}")
+    print(f"  Measurement Interval: {MeasurementInterval} sec")
+    print(f"  Transmission Interval: {TransmissionInterval} sec")
+    print(f"  Change Detection: {'Enabled' if EnableChangeDetection else 'Disabled'}")
+    if EnableChangeDetection:
+        print(f"    - Delta-T Threshold: ±{DeltaTThreshold}°C")
+        print(f"    - Flow Threshold: ±{FlowThreshold} LPM")
+    print("\n" + "=" * 80)
+    print("Starting measurements...")
     print("Press Ctrl+C to stop")
-    print()
+    print("=" * 80 + "\n")
+    
+    # Timing variables
+    LastTransmissionTime = utime.time()
+    MeasurementCounter = 0
+    TransmissionCounter = 0
     
     try:
         while True:
-            utime.sleep(MEASUREMENT_INTERVAL)
+            # Measure sensors
+            Frequency, Temp1C, Temp2C = BtuMeter.MeasureAll()
+            MeasurementCounter += 1
             
-            # Get JSON string
-            json_string = sensors.read_and_send_json(compact=USE_COMPACT_FORMAT)
+            # Check transmission conditions
+            CurrentTime = utime.time()
+            TimeSinceTransmission = CurrentTime - LastTransmissionTime
             
-            # Print JSON packet (this would be sent over MQTT/serial)
-            print(json_string)
+            # Condition 1: Regular interval exceeded
+            TimeBasedTrigger = TimeSinceTransmission >= TransmissionInterval
+            
+            # Condition 2: Significant change detected (if enabled)
+            ChangeBasedTrigger = False
+            if EnableChangeDetection:
+                ChangeBasedTrigger = BtuMeter.CheckSignificantChange(
+                    DeltaTThreshold=DeltaTThreshold,
+                    FlowThreshold=FlowThreshold
+                )
+            
+            # Transmit if either condition is met
+            if TimeBasedTrigger or ChangeBasedTrigger:
+                JsonString = BtuMeter.GetJsonString(Frequency, Temp1C, Temp2C)
+                
+                # Indicate why we transmitted
+                TriggerReason = []
+                if TimeBasedTrigger:
+                    TriggerReason.append("TIMER")
+                if ChangeBasedTrigger:
+                    TriggerReason.append("CHANGE")
+                
+                print(f"[{'/'.join(TriggerReason)}] {JsonString}")
+                
+                LastTransmissionTime = CurrentTime
+                TransmissionCounter += 1
+            
+            # Wait until next measurement
+            utime.sleep(MeasurementInterval)
             
     except KeyboardInterrupt:
         print("\n" + "=" * 80)
-        print("Stopped")
+        print("BTU Meter stopped")
+        print(f"Total measurements: {MeasurementCounter}")
+        print(f"Total transmissions: {TransmissionCounter}")
         print("=" * 80)
 
 
 if __name__ == "__main__":
     main()
+
