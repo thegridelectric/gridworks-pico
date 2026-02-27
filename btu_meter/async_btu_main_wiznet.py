@@ -1,5 +1,6 @@
 import gc
 import machine
+from machine import Pin
 import utime
 import math
 import network
@@ -46,6 +47,10 @@ class AsyncBtuMeter:
         self.load_app_config()
 
         # Hardware setup
+        # Release any ADC pull-down/pull-up resistors
+        Pin(26, Pin.IN)
+        Pin(27, Pin.IN)
+        Pin(28, Pin.IN)
         self.pulse_pin = machine.Pin(self.PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.adc_hot = machine.ADC(self.ADC0_PIN)
         self.adc_cold = machine.ADC(self.ADC1_PIN)

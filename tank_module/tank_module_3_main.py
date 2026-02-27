@@ -1,5 +1,6 @@
 
 import machine
+from machine import Pin
 import utime
 import network
 import ujson
@@ -40,7 +41,11 @@ class TankModule3:
         # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
-        # Pins
+        # Release any ADC pull-down/pull-up resistors
+        Pin(26, Pin.IN)
+        Pin(27, Pin.IN)
+        Pin(28, Pin.IN)
+        # Set Pin as ADC
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
