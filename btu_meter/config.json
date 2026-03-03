@@ -1,0 +1,39 @@
+{
+  "DeviceIdentity": {
+    "DeviceId": "btuMeter_01",
+    "Location": "Building A - Chiller Loop"
+  },
+  "HardwareCalibration": {
+    "KFlowFactor": 0.15,
+    "ThermistorR1": 10000,
+    "ThermistorR2Nominal": 10000,
+    "ThermistorBCoefficient": 3977,
+    "ThermistorTNominal": 25
+  },
+  "FluidProperties": {
+    "SpecificHeat": 4.186,
+    "Density": 1000
+  },
+  "MeasurementTiming": {
+    "MeasurementInterval": 1.0,
+    "TransmissionInterval": 10.0
+  },
+  "ChangeDetection": {
+    "EnableChangeDetection": true,
+    "DeltaTThreshold": 1.0,
+    "FlowThreshold": 1.0
+  },
+  "GpioPins": {
+    "FreqPin": 22,
+    "Temp1Pin": 26,
+    "Temp2Pin": 27
+  },
+  "MqttSettings": {
+    "Enabled": false,
+    "Broker": "mqtt.example.com",
+    "Port": 1883,
+    "Topic": "sensors/btu_meter",
+    "Username": "",
+    "Password": ""
+  }
+}
