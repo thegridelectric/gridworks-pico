@@ -2,11 +2,10 @@ import os
 import machine
 from machine import Pin
 import utime
-import network
 import ujson
-import urequests
 import ubinascii
-import gc
+
+import net
 
 # ---------------------------------
 # Constants
@@ -48,8 +47,8 @@ class TankModule3:
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
-        # Load configuration files
         self.load_comms_config()
+        self.http = net.HttpClient(base_url=self.base_url)
         try:
             with open(APP_CONFIG_FILE, "r") as f:
                 app_config = ujson.load(f)
@@ -105,36 +104,6 @@ class TankModule3:
             raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
         if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
-        
-    def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
-            print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
-                utime.sleep_ms(500)
-        print(f"Connected to wifi {self.wifi_name}")
-
-    def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
 
     # ---------------------------------
     # Parameters
@@ -176,34 +145,14 @@ class TankModule3:
         }
 
     def update_app_config(self):
-        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
-
         current = self.current_tank_module_params()
+        status, updated_config = self.http.post(
+            f"/{self.actor_node_name}/tank-module-params",
+            current,
+            mode=1
+        )
 
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(current)
-
-        response = None
-        text = None
-
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            if response.status_code == 200:
-                text = response.text
-        finally:
-            if response:
-                try:
-                    response.close()
-                except:
-                    pass
-
-        if not text:
-            return
-
-        try:
-            updated_config = ujson.loads(text)
-        except Exception as e:
-            print("Invalid JSON from server:", e)
+        if status != 200 or not updated_config:
             return
 
         PARAM_KEYS = (
@@ -223,51 +172,53 @@ class TankModule3:
             return
 
         new_config = {
-            k: updated_config.get(k)
+            k: updated_config.get(k, current[k])
             for k in PARAM_KEYS
         }
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
 
+        offset = updated_config.get("CaptureOffsetS")
+        if isinstance(offset, int) and 0 <= offset < self.capture_period_s:
+            self.capture_offset_seconds = offset
 
     # ---------------------------------
     # Code updates
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
             "Version": "100"
         }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = None
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            if response.status_code == 200:
-                # If there is a pending code update then the response is a python file, otherwise json
-                try:
-                    ujson.loads(response.content.decode('utf-8'))
-                except:
-                    python_code = response.content
-                    with open('main_update.py.tmp', 'wb') as file:
-                        file.write(python_code)
-                        file.flush()
+        status, content = self.http.post(
+            f"/{self.actor_node_name}/code-update",
+            payload,
+            mode=2  # raw bytes
+        )
+        if status != 200 or not content:
+            return
 
-                    os.sync()
-                    os.rename('main_update.py.tmp', 'main_update.py')
-                    os.sync()
-                    machine.reset()
-        finally:
-            if response:
-                try:
-                    response.close()
-                except:
-                    pass
+        # JSON response → no update pending
+        if content.startswith(b"{"):
+            return
+
+        try:
+            with open("main_update.py.tmp", "wb") as f:
+                f.write(content)
+                f.flush()
+
+            os.sync()
+            os.rename("main_update.py.tmp", "main_update.py")
+            os.sync()
+
+            machine.reset()
+
+        except Exception as e:
+            print("Code update failed:", e)
 
     # ---------------------------------
     # Measuring microvolts
@@ -295,7 +246,6 @@ class TankModule3:
     # ---------------------------------
 
     def post_microvolts(self, idx=3):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
         if idx==0:
             mv_list = [self.mv0]
         elif idx==1:
@@ -311,21 +261,11 @@ class TankModule3:
             "TypeName": "microvolts", 
             "Version": "100"
         }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-
-        response = None
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-        except Exception as e:
-            print(f"Error posting microvolts: {e}")
-        finally:
-            if response:
-                try:
-                    response.close()
-                except:
-                    pass
-        gc.collect()
+        
+        self.http.post_fire_and_forget(
+            f"/{self.actor_node_name}/microvolts",
+            payload
+        )
         self.microvolts_posted_time = utime.time()
         
     def sync_report(self, timer):
@@ -360,9 +300,9 @@ class TankModule3:
 
     def start(self):
         if self.wifi_or_ethernet=='wifi':
-            self.connect_to_wifi()
+            net.connect_to_wifi(self.wifi_name, self.wifi_password)
         elif self.wifi_or_ethernet=='ethernet':
-            self.connect_to_ethernet()
+            net.connect_to_ethernet()
         self.update_code()
         self.update_app_config()
         self.set_names()
