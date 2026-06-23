@@ -737,29 +737,39 @@ class AsyncBtuMeter:
             flow_val = self.hz
             flow_unit = "HzTimes100"
         if send_sync:
-            if flow_val is not None and self.hot is not None and self.cold is not None:
+            about_nodes = []
+            measurements = []
+            units = []
 
-                about_nodes = [self.flow_channel_name, self.hot_channel_name, self.cold_channel_name]
-                measurements = [
-                    round(flow_val * 100),
-                    round(self.hot * 100),
-                    round(self.cold * 100),
-                ]
-                units = [flow_unit, "CelsiusTimes100", "CelsiusTimes100"]
-                
-                if self.read_ct_voltage and self.pump_ct_voltage is not None:
-                    about_nodes.append(self.ct_channel_name)
-                    measurements.append(round(self.pump_ct_voltage * 100))
-                    units.append("VoltsTimes100")
-                
+            if flow_val is not None:
+                about_nodes.append(self.flow_channel_name)
+                measurements.append(round(flow_val * 100))
+                units.append(flow_unit)
+
+            if self.hot is not None:
+                about_nodes.append(self.hot_channel_name)
+                measurements.append(round(self.hot * 100))
+                units.append("CelsiusTimes100")
+
+            if self.cold is not None:
+                about_nodes.append(self.cold_channel_name)
+                measurements.append(round(self.cold * 100))
+                units.append("CelsiusTimes100")
+
+            if self.read_ct_voltage and self.pump_ct_voltage is not None:
+                about_nodes.append(self.ct_channel_name)
+                measurements.append(round(self.pump_ct_voltage * 100))
+                units.append("VoltsTimes100")
+
+            if about_nodes:
+                print(f"SYNC SEND → {about_nodes} {measurements}")
                 self.post_btu_data(about_nodes, measurements, units)
                 self.last_sync_report_s = now_s
-                print(f"JUST RESET last_sync_report_s")
         else:
             about_nodes = []
             measurements = []
             units = []
-            if flow_val is None or self.hot is None or self.cold is None:
+            if flow_val is None and self.hot is None and self.cold is None:
                 print(f"Skipping async - missing data: flow: {flow_val}{flow_unit}, hot={self.hot}, cold={self.cold}")
                 return
             if 100 * abs(self.gpm - self.last_sent_gpm) > self.async_capture_delta_gpm_x_100:
