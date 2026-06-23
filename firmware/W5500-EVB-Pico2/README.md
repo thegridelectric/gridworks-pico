@@ -1,25 +1,34 @@
 # W5500-EVB-Pico2 MicroPython Firmware
 
 Custom MicroPython firmware for the Wiznet W5500-EVB-Pico2 board (RP2350-based) with integrated Ethernet support.
+You will need a usbc - usbc data chord.
 
 ## Quick Start
- 0. `brew install picotool` 
 
+
+**Steps 0 - 4 ALL are on a terminal window**
+
+ 0. `brew install picotool` (only need to do this once)
+
+ 1. Navigate to this directory (after making sure this repository is local and up to date):
+   `cd $path/gridworks-pico/firmware/W5500-EVB-Pico2/`
 and then
 
- 1. Hold BOOTSEL button while connecting the Pico2 to USB
- 2. Navigate to this directory.
- 3. Confirm the RP2350 drive exists
+ 2. Hold BOOTSEL button while connecting the Pico2 to USB (the one _closer_ to the USB-C)
+
+ 3. Confirm the RP2350 drive exists: `ls /Volumes`
  4. load code:
 
  ```
- ls /Volumes
  picotool load 	Wiz-Pico2_2aaf30.uf2
  ```
+Unplug and then plug back in the pico, and then open Thonny and in the lower right corner select the new micropython OS. In Thonny:
+ 1. Verify at the top of the Shell window that the OS is for a Pico2 (grey text ends with `W5500-EVB-Pico2 with RP2350`)
+ 2. In Thonny go to Tools -> manage packages -> 
+ 3. Type `urequests` into the search prompt
+ 4. Click on `urequests` when it comes up and then click on `install`. The `urequests` package will now be installed on the pico (in thonny, you should see `lib` in the drop-down window with a carrot; urequests is installed under that)
 
-After plugging back in:
-In Thonny go to Tools -> manage packages -> 
-
+After this you should be able to run the standard `provisioner.py` (after plugging into Ethernet and re-powering)
  ## Features
 
  - MicroPython v1.27.0-preview.83
@@ -31,6 +40,7 @@ In Thonny go to Tools -> manage packages ->
 
 ```
 import network
+import urequests
 from machine import Pin, SPI
 
 # Option 1: Use default pins (if board detection works)
