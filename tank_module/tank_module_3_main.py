@@ -61,6 +61,9 @@ class TankModule3:
         self.node_names = []
         self.microvolts_posted_time = utime.time()
         self.time_last_tried_to_reconnect = utime.time()
+        self.needs_reconnect = False
+        self.wlan = None
+        self.ethernet_nic = None
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
@@ -102,30 +105,32 @@ class TankModule3:
             raise KeyError("BaseUrl not found in comms_config.json")
         
     def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
+        if self.wlan is None:
+            self.wlan = network.WLAN(network.STA_IF)
+        self.wlan.active(True)
+        if not self.wlan.isconnected():
             print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
+            self.wlan.connect(self.wifi_name, self.wifi_password)
+            while not self.wlan.isconnected():
                 utime.sleep_ms(500)
         print(f"Connected to wifi {self.wifi_name}")
 
     def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
+        if self.ethernet_nic is None:
+            self.ethernet_nic = network.WIZNET5K()
         for attempt in range(3):
             try:
-                nic.active(True)
+                self.ethernet_nic.active(True)
                 break
             except Exception as e:
                 print(f"Retrying NIC activation due to: {e}")
                 utime.sleep(0.5)
-        if not nic.isconnected():
+        if not self.ethernet_nic.isconnected():
             print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
+            self.ethernet_nic.ifconfig('dhcp')
             timeout = 10
             start = utime.time()
-            while not nic.isconnected():
+            while not self.ethernet_nic.isconnected():
                 if utime.time() - start > timeout:
                     raise RuntimeError("Failed to connect to Ethernet (timeout)")
                 utime.sleep(0.5)
@@ -316,8 +321,7 @@ class TankModule3:
             response.close()
         except Exception as e:
             print(f"Error posting microvolts: {e}")
-            if utime.time() - self.time_last_tried_to_reconnect > 300:
-                self.try_to_reconnect()
+            self.needs_reconnect = True
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
@@ -337,6 +341,9 @@ class TankModule3:
         self.mv1 = self.adc1_micros()
         self.mv2 = self.adc2_micros()
         while True:
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > 300:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
             self.mv0 = self.adc0_micros()
             self.mv1 = self.adc1_micros()
             self.mv2 = self.adc2_micros()
@@ -355,10 +362,10 @@ class TankModule3:
         self.time_last_tried_to_reconnect = utime.time()
         try:
             if self.wifi_or_ethernet=='wifi':
-                if not network.WLAN(network.STA_IF).isconnected():
+                if self.wlan is None or not self.wlan.isconnected():
                     self.connect_to_wifi()
             elif self.wifi_or_ethernet=='ethernet':
-                if not network.WIZNET5K().isconnected():
+                if self.ethernet_nic is None or not self.ethernet_nic.isconnected():
                     self.connect_to_ethernet()
         except Exception as e:
             print(f"Error when trying to reconnect ({e})")
