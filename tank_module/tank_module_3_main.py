@@ -36,7 +36,6 @@ ADC2_PIN_NUMBER = 28
 # ---------------------------------
 
 class TankModule3:
-
     def __init__(self):
         # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
@@ -61,6 +60,7 @@ class TankModule3:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        self.time_last_tried_to_reconnect = utime.time()
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_report_timer = machine.Timer(-1)
@@ -171,8 +171,9 @@ class TankModule3:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            "WifiOrEthernet": self.wifi_or_ethernet,
             "TypeName": "tank.module.params",
-            "Version": "110"
+            "Version": "120" # TODO double check with SCADA version
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
@@ -180,13 +181,44 @@ class TankModule3:
             response = urequests.post(url, data=json_payload, headers=headers)
             if response.status_code == 200:
                 updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.samples = updated_config.get("Samples", self.samples)
-                self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
-                self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                self.save_app_config()
+                need_to_update_app_config = False
+                
+                updated_actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
+                if updated_actor_node_name != self.actor_node_name:
+                    self.actor_node_name = updated_actor_node_name
+                    need_to_update_app_config = True
+                
+                updated_capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
+                if updated_capture_period_s != self.capture_period_s:
+                    self.capture_period_s = updated_capture_period_s
+                    need_to_update_app_config = True
+
+                updated_samples = updated_config.get("Samples", self.samples)
+                if updated_samples != self.samples:
+                    self.samples = updated_samples
+                    need_to_update_app_config = True
+
+                updated_num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
+                if updated_num_sample_averages != self.num_sample_averages:
+                    self.num_sample_averages = updated_num_sample_averages
+                    need_to_update_app_config = True
+
+                updated_async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
+                if updated_async_capture_delta_micro_volts != self.async_capture_delta_micro_volts:
+                    self.async_capture_delta_micro_volts = updated_async_capture_delta_micro_volts
+                    need_to_update_app_config = True
+
+                updated_capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
+                if updated_capture_offset_seconds != self.capture_offset_seconds:
+                    self.capture_offset_seconds = updated_capture_offset_seconds
+                    need_to_update_app_config = True
+
+                if need_to_update_app_config:
+                    print(f"Updating app config in 5 seconds...")
+                    utime.sleep(5)
+                    self.save_app_config()
+                    print(f"App config updated")
+
             response.close()
         except Exception as e:
             print(f"Error sending tank module params: {e}")
@@ -284,6 +316,8 @@ class TankModule3:
             response.close()
         except Exception as e:
             print(f"Error posting microvolts: {e}")
+            if utime.time() - self.time_last_tried_to_reconnect > 300:
+                self.try_to_reconnect()
         gc.collect()
         self.microvolts_posted_time = utime.time()
         
@@ -316,6 +350,18 @@ class TankModule3:
                 self.post_microvolts(idx=2)
                 self.prev_mv2 = self.mv2
             utime.sleep_ms(100)
+
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet=='wifi':
+                if not network.WLAN(network.STA_IF).isconnected():
+                    self.connect_to_wifi()
+            elif self.wifi_or_ethernet=='ethernet':
+                if not network.WIZNET5K().isconnected():
+                    self.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
 
     def start(self):
         if self.wifi_or_ethernet=='wifi':
