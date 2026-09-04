@@ -249,6 +249,8 @@ class TankModule3:
                 ujson.loads(response.content.decode('utf-8'))
             except:
                 python_code = response.content
+                print(f"Writing main_update.py in 5 seconds...")
+                utime.sleep(5)
                 with open('main_update.py', 'wb') as file:
                     file.write(python_code)
                 machine.reset()
