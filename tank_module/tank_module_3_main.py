@@ -178,7 +178,7 @@ class TankModule3:
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
             "WifiOrEthernet": self.wifi_or_ethernet,
             "TypeName": "tank.module.params",
-            "Version": "120" # TODO double check with SCADA version
+            "Version": "200"
         }
         headers = {"Content-Type": "application/json"}
         json_payload = ujson.dumps(payload)
