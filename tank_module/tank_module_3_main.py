@@ -37,6 +37,17 @@ ADC2_PIN_NUMBER = 28
 
 RECONNECT_COOLDOWN_S = 300
 
+
+def _atomic_write(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+    os.sync()
+    os.rename(tmp, path)
+    os.sync()
+
+
 # ---------------------------------
 # Main class
 # ---------------------------------
@@ -150,14 +161,8 @@ class TankModule3:
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
 
     def save_app_config(self, config_dict):
-        temp_file = APP_CONFIG_FILE + ".tmp"
         try:
-            with open(temp_file, "w") as f:
-                ujson.dump(config_dict, f)
-                f.flush()
-            os.sync()
-            os.rename(temp_file, APP_CONFIG_FILE)
-            os.sync()
+            _atomic_write(APP_CONFIG_FILE, ujson.dumps(config_dict).encode())
         except Exception as e:
             print(f"Error saving app config: {e}")
 
@@ -238,16 +243,8 @@ class TankModule3:
             return
 
         try:
-            with open("main_update.py.tmp", "wb") as f:
-                f.write(content)
-                f.flush()
-
-            os.sync()
-            os.rename("main_update.py.tmp", "main_update.py")
-            os.sync()
-
+            _atomic_write("main_update.py", content)
             machine.reset()
-
         except Exception as e:
             print("Code update failed:", e)
 
