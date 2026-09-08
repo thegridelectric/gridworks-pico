@@ -4,32 +4,62 @@ import urequests
 import ujson
 import gc
 
+CONNECT_TIMEOUT_S = 10
 
-def connect_to_wifi(name, password):
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    if not wlan.isconnected():
-        wlan.connect(name, password)
-        while not wlan.isconnected():
+_wlan = None
+_ethernet_nic = None
+
+
+def connect_to_wifi(name, password, timeout_s=CONNECT_TIMEOUT_S):
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    _wlan.active(True)
+    if not _wlan.isconnected():
+        print("Connecting to wifi...")
+        _wlan.connect(name, password)
+        start = utime.time()
+        while not _wlan.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to WiFi (timeout)")
             utime.sleep_ms(500)
+    print(f"Connected to wifi {name}")
 
 
-def connect_to_ethernet():
-    nic = network.WIZNET5K()
+def is_wifi_connected():
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    return _wlan.isconnected()
+
+
+def connect_to_ethernet(timeout_s=CONNECT_TIMEOUT_S):
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        _ethernet_nic = network.WIZNET5K()
     for _ in range(3):
         try:
-            nic.active(True)
+            _ethernet_nic.active(True)
             break
         except:
             utime.sleep_ms(500)
 
-    if not nic.isconnected():
-        nic.ifconfig('dhcp')
+    if not _ethernet_nic.isconnected():
+        print("Connecting to Ethernet...")
+        _ethernet_nic.ifconfig('dhcp')
         start = utime.time()
-        while not nic.isconnected():
-            if utime.time() - start > 10:
-                raise RuntimeError("Ethernet timeout")
+        while not _ethernet_nic.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to Ethernet (timeout)")
             utime.sleep_ms(500)
+    print("Connected to Ethernet")
+
+
+def is_ethernet_connected():
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        return False
+    return _ethernet_nic.isconnected()
 
 
 class HttpClient:

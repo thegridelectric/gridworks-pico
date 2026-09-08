@@ -35,6 +35,8 @@ ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
 ADC2_PIN_NUMBER = 28
 
+RECONNECT_COOLDOWN_S = 300
+
 # ---------------------------------
 # Main class
 # ---------------------------------
@@ -70,6 +72,8 @@ class TankModule3:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_flag = False
@@ -289,10 +293,12 @@ class TankModule3:
             "Version": "100"
         }
         
-        self.http.post_fire_and_forget(
+        status = self.http.post_fire_and_forget(
             f"/{self.actor_node_name}/microvolts",
             payload
         )
+        if status is None:
+            self.needs_reconnect = True
         self.microvolts_posted_time = utime.time()
         
     def sync_report(self, timer):
@@ -306,8 +312,23 @@ class TankModule3:
             callback=self.sync_report
         )
 
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
+
     def main_loop(self):
         while True:
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
             self.mv0 = self.adc_micros(self.adc0)
             self.mv1 = self.adc_micros(self.adc1)
             self.mv2 = self.adc_micros(self.adc2)
@@ -326,10 +347,15 @@ class TankModule3:
             utime.sleep_ms(100)
 
     def start(self):
-        if self.wifi_or_ethernet=='wifi':
-            net.connect_to_wifi(self.wifi_name, self.wifi_password)
-        elif self.wifi_or_ethernet=='ethernet':
-            net.connect_to_ethernet()
+        try:
+            if self.wifi_or_ethernet=='wifi':
+                net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet=='ethernet':
+                net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Initial connect failed ({e})")
+            self.needs_reconnect = True
+            self.time_last_tried_to_reconnect = 0
         self.update_code()
         self.update_app_config()
         self.set_names()
