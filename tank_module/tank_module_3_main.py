@@ -14,6 +14,12 @@ import net
 # Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
 
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
@@ -90,6 +96,7 @@ class TankModule3:
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -104,6 +111,24 @@ class TankModule3:
             raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
         if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
+
+    def determine_pico_board_variant(self, configured):
+        '''The physical board, as a pico.board.variant enum value.
+        comms_config.json wins when the provisioner wrote one; otherwise
+        derive it from os.uname().machine, with WifiOrEthernet as the
+        tiebreak between the two RP2040 boards. Unknown when neither
+        settles it.'''
+        if configured in PICO_BOARD_VARIANTS:
+            return configured
+        machine_str = os.uname().machine
+        if "RP2350" in machine_str:
+            return "PicoWiznetEth2350"
+        if "RP2040" in machine_str:
+            if self.wifi_or_ethernet == 'ethernet':
+                return "PicoWiznetEth2040"
+            if self.wifi_or_ethernet == 'wifi':
+                return "PicoRaspberryWifi2040"
+        return "Unknown"
 
     # ---------------------------------
     # Parameters
@@ -140,8 +165,10 @@ class TankModule3:
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            "PicoBoardVariant": self.pico_board_variant,
+            "MicropythonVersion": os.uname().release,
             "TypeName": "tank.module.params",
-            "Version": "110"
+            "Version": "200"
         }
 
     def update_app_config(self):
