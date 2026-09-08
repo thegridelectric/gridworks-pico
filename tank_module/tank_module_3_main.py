@@ -180,7 +180,7 @@ class TankModule3:
         self.load_app_config(new_config)
 
         offset = updated_config.get("CaptureOffsetS")
-        if isinstance(offset, int) and 0 <= offset < self.capture_period_s:
+        if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
             self.capture_offset_seconds = offset
 
     # ---------------------------------
