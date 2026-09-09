@@ -23,6 +23,8 @@ if 'main.py' in os.listdir():
     os.remove('main.py')
 if 'main_previous.py' in os.listdir():
     os.remove('main_previous.py')
+if 'net.py' in os.listdir():
+    os.remove('net.py')
 
 # *************************
 # 1/3 - MAIN.PY PROVISION
@@ -30,19 +32,32 @@ if 'main_previous.py' in os.listdir():
 """
 
 # ----------------------------------------------------
-# 2 - beginning of tank3 main
+# 2 - beginning of net.py
 # ----------------------------------------------------
 
 step2 = """
+def write_net_py():
+    net_code = \"\"\"
+"""
+
+# ----------------------------------------------------
+# 3 - End of net.py, beginning of tank3 main
+# ----------------------------------------------------
+
+step3 = """
+    \"\"\"
+    with open('net.py', 'w') as file:
+        file.write(net_code)
+
 def write_tank_module_3_main():
     main_code = \"\"\"
 """
 
 # ----------------------------------------------------
-# 3 - End of tank3 main, beggining of btu main
+# 4 - End of tank3 main, beggining of btu main
 # ----------------------------------------------------
 
-step3 = """
+step4 = """
     \"\"\"
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -54,10 +69,10 @@ def write_btu_meter_main():
 
 
 # ----------------------------------------------------
-# 4 - End of btu main, end of provisioner
+# 5 - End of btu main, end of provisioner
 # ----------------------------------------------------
 
-step4 = """
+step5 = """
     \"\"\"
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -70,6 +85,19 @@ step4 = """
 # -------------------------
 # Tank module
 # -------------------------
+
+def determine_pico_board_variant(wifi_or_ethernet):
+    machine_str = os.uname().machine
+    print(f"os.uname().machine = {machine_str!r}")
+    if "RP2350" in machine_str:
+        return "PicoWiznetEth2350"
+    if "RP2040" in machine_str:
+        if wifi_or_ethernet == 'ethernet':
+            return "PicoWiznetEth2040"
+        if wifi_or_ethernet == 'wifi':
+            return "PicoRaspberryWifi2040"
+    return "Unknown"
+
 
 def provision_tank_module():
     \"\"\"Configure tank module app_config.json\"\"\"
@@ -153,7 +181,7 @@ elif 'main_revert.py' in os.listdir():
         file.write(bootpy_code)
     print(f"Wrote 'boot.py' on the Pico.")
     
-    print(f"\\n{'-'*40}\\n[1/4] Success! Found hardware ID and wrote 'boot.py'.\\n{'-'*40}\\n")
+    print(f"\\n{'-'*40}\\n[1/3] Success! Found hardware ID and wrote 'boot.py'.\\n{'-'*40}\\n")
 
     # -------------------------
     # Write comms_config.json
@@ -161,25 +189,28 @@ elif 'main_revert.py' in os.listdir():
 
     have_wifi_or_ethernet = False
     while not have_wifi_or_ethernet:
-        wifi_or_ethernet = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
-        if wifi_or_ethernet not in {'w','e'}:
+        transport_choice = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
+        if transport_choice not in {'w', 'e'}:
             print("Invalid entry. Please enter either 'w' or 'e'.")
         else:
             have_wifi_or_ethernet = True
-    
-    # Connect to wifi
-    if wifi_or_ethernet == 'w':
+
+    if transport_choice == 'w':
+        wifi_or_ethernet = 'wifi'
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
         wlan.disconnect()
         while wlan.isconnected():
             utime.sleep(0.1)
-        
+
         while not wlan.isconnected():
             wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
             if wifi_name == "":
                 wifi_name = "GridWorks"
             wifi_pass = input("Enter wifi password: ")
+            wlan.disconnect()
+            while wlan.isconnected():
+                utime.sleep(0.1)
             time_waiting_connection = 0
             wlan.connect(wifi_name, wifi_pass)
             while not wlan.isconnected():
@@ -192,8 +223,8 @@ elif 'main_revert.py' in os.listdir():
                     break
         print(f"Connected to wifi '{wifi_name}'.\\n")
 
-    # Connect to ethernet
-    elif wifi_or_ethernet == 'e':
+    elif transport_choice == 'e':
+        wifi_or_ethernet = 'ethernet'
         nic = network.WIZNET5K()
         for attempt in range(3):
             try:
@@ -212,6 +243,9 @@ elif 'main_revert.py' in os.listdir():
                     raise RuntimeError("Failed to connect to Ethernet (timeout)")
                 utime.sleep(0.5)
         print("Connected to Ethernet")
+
+    pico_board_variant = determine_pico_board_variant(wifi_or_ethernet)
+    print(f"PicoBoardVariant = {pico_board_variant}")
 
     # Connect to API
 
@@ -247,24 +281,26 @@ elif 'main_revert.py' in os.listdir():
     backup_url = f"http://{hostname}.local:8000"
 
     # Write the parameters to comms_config.json
-    if wifi_or_ethernet=='w':
+    if wifi_or_ethernet == 'wifi':
         comms_config_content = {
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
-            "WifiPassword": wifi_pass, 
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "WifiPassword": wifi_pass,
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
-    elif wifi_or_ethernet=='e':
+    elif wifi_or_ethernet == 'ethernet':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)
 
-    print(f"\\n{'-'*40}\\n[2/4] Success! Wrote 'comms_config.json' on the Pico.\\n{'-'*40}\\n")
+    print(f"\\n{'-'*40}\\n[2/3] Success! Wrote 'comms_config.json' on the Pico.\\n{'-'*40}\\n")
 
     # -------------------------
     # Write app_config.json and main code
@@ -278,14 +314,14 @@ elif 'main_revert.py' in os.listdir():
     if device_type == '0':
         actor_name = provision_tank_module()
         print("This is a tank module")
+        write_net_py()
         write_tank_module_3_main()
     elif device_type == '1':
         actor_name = provision_btu_meter()
         print("This is a BTU meter.")
         write_btu_meter_main()
-        
 
-    print(f"\\n{'-'*40}\\n[4/4] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
+    print(f"\\n{'-'*40}\\n[3/3] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
 
     print("The Pico is set up. It is now ready to use.")"""
 
@@ -296,6 +332,8 @@ elif 'main_revert.py' in os.listdir():
 
 with open('tank_module/tank_module_3_main.py', 'r') as file:
     tank_module_3_main = file.read()
+with open('net.py', 'r') as file:
+    net_py = file.read()
 with open('btu_meter/async_btu_main.py', 'r') as file:
     async_btu_main = file.read()
 
@@ -303,7 +341,9 @@ if __name__ == "__main__":
     with open('provisioner.py', 'w') as file:
         file.write(step1)
         file.write(step2)
-        file.write(tank_module_3_main)
+        file.write(net_py)
         file.write(step3)
-        file.write(async_btu_main)
+        file.write(tank_module_3_main)
         file.write(step4)
+        file.write(async_btu_main)
+        file.write(step5)

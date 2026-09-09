@@ -19,23 +19,160 @@ if 'main.py' in os.listdir():
     os.remove('main.py')
 if 'main_previous.py' in os.listdir():
     os.remove('main_previous.py')
+if 'net.py' in os.listdir():
+    os.remove('net.py')
 
 # *************************
 # 1/3 - MAIN.PY PROVISION
 # *************************
 
+def write_net_py():
+    net_code = """
+import network
+import utime
+import urequests
+import ujson
+import gc
+
+CONNECT_TIMEOUT_S = 10
+
+_wlan = None
+_ethernet_nic = None
+
+
+def connect_to_wifi(name, password, timeout_s=CONNECT_TIMEOUT_S):
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    _wlan.active(True)
+    if not _wlan.isconnected():
+        print("Connecting to wifi...")
+        _wlan.connect(name, password)
+        start = utime.time()
+        while not _wlan.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to WiFi (timeout)")
+            utime.sleep_ms(500)
+    print(f"Connected to wifi {name}")
+
+
+def is_wifi_connected():
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    return _wlan.isconnected()
+
+
+def connect_to_ethernet(timeout_s=CONNECT_TIMEOUT_S):
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        _ethernet_nic = network.WIZNET5K()
+    for _ in range(3):
+        try:
+            _ethernet_nic.active(True)
+            break
+        except:
+            utime.sleep_ms(500)
+
+    if not _ethernet_nic.isconnected():
+        print("Connecting to Ethernet...")
+        _ethernet_nic.ifconfig('dhcp')
+        start = utime.time()
+        while not _ethernet_nic.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to Ethernet (timeout)")
+            utime.sleep_ms(500)
+    print("Connected to Ethernet")
+
+
+def is_ethernet_connected():
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        return False
+    return _ethernet_nic.isconnected()
+
+
+class HttpClient:
+
+    def __init__(self, base_url):
+        self.base_url = base_url.rstrip("/")
+
+    def _close(self, r):
+        if r:
+            try:
+                r.close()
+            except:
+                pass
+
+    def post(self, path, payload, mode=0):
+        # mode: 0=ignore body, 1=json, 2=bytes
+
+        url = self.base_url + path
+        headers = {"Content-Type": "application/json"}
+        body = ujson.dumps(payload)
+
+        r = None
+        status = None
+        text = None
+        content = None
+
+        try:
+            r = urequests.post(url, data=body, headers=headers)
+            status = r.status_code
+    
+            if status == 200:
+                if mode == 2:
+                    content = r.content
+                elif mode == 1:
+                    text = r.text
+        except:
+            return None, None
+        finally:
+            self._close(r)
+
+        if mode == 1 and text:
+            try:
+                result = ujson.loads(text)
+            except:
+                result = None
+            gc.collect()
+            return status, result
+
+        if mode == 2:
+            gc.collect()
+            return status, content
+
+        gc.collect()
+        return status, None
+
+    def post_fire_and_forget(self, path, payload):
+        url = self.base_url + path
+        headers = {"Content-Type": "application/json"}
+        body = ujson.dumps(payload)
+
+        r = None
+        try:
+            r = urequests.post(url, data=body, headers=headers)
+            return r.status_code
+        except:
+            return None
+        finally:
+            self._close(r)
+            gc.collect()
+    """
+    with open('net.py', 'w') as file:
+        file.write(net_code)
+
 def write_tank_module_3_main():
     main_code = """
-
+import os
 import machine
 from machine import Pin
 import utime
-import network
 import ujson
-import urequests
 import ubinascii
-import utime
-import gc
+
+import net
 
 # ---------------------------------
 # Constants
@@ -44,6 +181,12 @@ import gc
 # Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
 
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
@@ -52,12 +195,25 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
-ADC_REF_V = 3.3
+ADC_REF_UV = 3_300_000
 
 # Other constants
 ADC0_PIN_NUMBER = 26
 ADC1_PIN_NUMBER = 27
 ADC2_PIN_NUMBER = 28
+
+RECONNECT_COOLDOWN_S = 300
+
+
+def _atomic_write(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+    os.sync()
+    os.rename(tmp, path)
+    os.sync()
+
 
 # ---------------------------------
 # Main class
@@ -77,9 +233,14 @@ class TankModule3:
         self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
         self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
         self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
-        # Load configuration files
         self.load_comms_config()
-        self.load_app_config()
+        self.http = net.HttpClient(base_url=self.base_url)
+        try:
+            with open(APP_CONFIG_FILE, "r") as f:
+                app_config = ujson.load(f)
+        except:
+            app_config = {}
+        self.load_app_config(app_config)
         # Measuring and repoting voltages
         self.prev_mv0 = -1
         self.prev_mv1 = -1
@@ -89,8 +250,11 @@ class TankModule3:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
+        self.sync_flag = False
         self.sync_report_timer = machine.Timer(-1)
 
     def set_names(self):
@@ -114,6 +278,7 @@ class TankModule3:
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
@@ -128,168 +293,154 @@ class TankModule3:
             raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
         if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
-        
-    def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
-            print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
-                utime.sleep_ms(500)
-        print(f"Connected to wifi {self.wifi_name}")
 
-    def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
+    def determine_pico_board_variant(self, configured):
+        '''The physical board, as a pico.board.variant enum value.
+        comms_config.json wins when the provisioner wrote one; otherwise
+        derive it from os.uname().machine, with WifiOrEthernet as the
+        tiebreak between the two RP2040 boards. Unknown when neither
+        settles it.'''
+        if configured in PICO_BOARD_VARIANTS:
+            return configured
+        machine_str = os.uname().machine
+        if "RP2350" in machine_str:
+            return "PicoWiznetEth2350"
+        if "RP2040" in machine_str:
+            if self.wifi_or_ethernet == 'ethernet':
+                return "PicoWiznetEth2040"
+            if self.wifi_or_ethernet == 'wifi':
+                return "PicoRaspberryWifi2040"
+        return "Unknown"
 
     # ---------------------------------
     # Parameters
     # ---------------------------------
     
-    def load_app_config(self):
+    def load_app_config(self, app_config):
         '''
         Set parameters to their value in the app_config file if it is specified
         Otherwise set them to their default value
         '''
-        try:
-            with open(APP_CONFIG_FILE, "r") as f:
-                app_config = ujson.load(f)
-        except:
-            app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
 
-    def save_app_config(self):
-        config = {
-            "ActorNodeName": self.actor_node_name,
-            "CapturePeriodS": self.capture_period_s,
-            "Samples": self.samples,
-            "NumSampleAverages":self.num_sample_averages,
-            "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-        }
-        with open(APP_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-    
-    def update_app_config(self):
-        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
-        payload = {
+    def save_app_config(self, config_dict):
+        try:
+            _atomic_write(APP_CONFIG_FILE, ujson.dumps(config_dict).encode())
+        except Exception as e:
+            print(f"Error saving app config: {e}")
+
+    def current_tank_module_params(self):
+        return {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            "PicoBoardVariant": self.pico_board_variant,
+            "MicropythonVersion": os.uname().release,
             "TypeName": "tank.module.params",
-            "Version": "110"
+            "Version": "200"
         }
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            if response.status_code == 200:
-                updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.samples = updated_config.get("Samples", self.samples)
-                self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
-                self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                self.save_app_config()
-            response.close()
-        except Exception as e:
-            print(f"Error sending tank module params: {e}")
+
+    def update_app_config(self):
+        current = self.current_tank_module_params()
+        status, updated_config = self.http.post(
+            f"/{self.actor_node_name}/tank-module-params",
+            current,
+            mode=1
+        )
+
+        if status != 200 or not updated_config:
+            return
+
+        PARAM_KEYS = (
+            "ActorNodeName",
+            "CapturePeriodS",
+            "Samples",
+            "NumSampleAverages",
+            "AsyncCaptureDeltaMicroVolts",
+        )
+
+        changed = any(
+            k in updated_config and updated_config[k] != current[k]
+            for k in PARAM_KEYS
+        )
+
+        if not changed:
+            return
+
+        new_config = {
+            k: updated_config.get(k, current[k])
+            for k in PARAM_KEYS
+        }
+
+        self.save_app_config(new_config)
+        self.load_app_config(new_config)
+
+        offset = updated_config.get("CaptureOffsetS")
+        if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
+            self.capture_offset_seconds = offset
 
     # ---------------------------------
     # Code updates
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
             "Version": "100"
         }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
+        status, content = self.http.post(
+            f"/{self.actor_node_name}/code-update",
+            payload,
+            mode=2  # raw bytes
+        )
+        if status != 200 or not content:
+            return
+
+        # JSON response → no update pending
+        if content.startswith(b"{"):
+            return
+
+        try:
+            _atomic_write("main_update.py", content)
+            machine.reset()
+        except Exception as e:
+            print("Code update failed:", e)
 
     # ---------------------------------
     # Measuring microvolts
     # ---------------------------------
 
-    def adc0_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc0.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)
-    
-    def adc1_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)
-    
-    def adc2_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc2.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)  
+    def adc_micros(self, adc):
+        samples = self.samples
+        averages = self.num_sample_averages
+        total_microvolts = 0
+        denom = 65535 * samples
+        read = adc.read_u16
+
+        for _ in range(averages):
+            total = 0
+            for _ in range(samples):
+                total += read()
+
+            microvolts = total * ADC_REF_UV // denom
+            total_microvolts += microvolts
+
+        return total_microvolts // averages
     
     # ---------------------------------
     # Posting microvolts
     # ---------------------------------
 
     def post_microvolts(self, idx=3):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
         if idx==0:
             mv_list = [self.mv0]
         elif idx==1:
@@ -305,18 +456,17 @@ class TankModule3:
             "TypeName": "microvolts", 
             "Version": "100"
         }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting microvolts: {e}")
-        gc.collect()
+        
+        status = self.http.post_fire_and_forget(
+            f"/{self.actor_node_name}/microvolts",
+            payload
+        )
+        if status is None:
+            self.needs_reconnect = True
         self.microvolts_posted_time = utime.time()
         
     def sync_report(self, timer):
-        self.post_microvolts()
+        self.sync_flag = True
 
     def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
@@ -326,14 +476,26 @@ class TankModule3:
             callback=self.sync_report
         )
 
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
+
     def main_loop(self):
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
-        self.mv2 = self.adc2_micros()
         while True:
-            self.mv0 = self.adc0_micros()
-            self.mv1 = self.adc1_micros()
-            self.mv2 = self.adc2_micros()
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
+            self.mv0 = self.adc_micros(self.adc0)
+            self.mv1 = self.adc_micros(self.adc1)
+            self.mv2 = self.adc_micros(self.adc2)
             if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
                 self.post_microvolts(idx=0)
                 self.prev_mv0 = self.mv0
@@ -343,19 +505,27 @@ class TankModule3:
             if abs(self.mv2 - self.prev_mv2) > self.async_capture_delta_micro_volts:
                 self.post_microvolts(idx=2)
                 self.prev_mv2 = self.mv2
+            if self.sync_flag:
+                self.sync_flag = False
+                self.post_microvolts()
             utime.sleep_ms(100)
 
     def start(self):
-        if self.wifi_or_ethernet=='wifi':
-            self.connect_to_wifi()
-        elif self.wifi_or_ethernet=='ethernet':
-            self.connect_to_ethernet()
+        try:
+            if self.wifi_or_ethernet=='wifi':
+                net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet=='ethernet':
+                net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Initial connect failed ({e})")
+            self.needs_reconnect = True
+            self.time_last_tried_to_reconnect = 0
         self.update_code()
         self.update_app_config()
         self.set_names()
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
-        self.mv2 = self.adc2_micros()
+        self.mv0 = self.adc_micros(self.adc0)
+        self.mv1 = self.adc_micros(self.adc1)
+        self.mv2 = self.adc_micros(self.adc2)
         self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
         self.start_sync_report_timer()
@@ -364,7 +534,6 @@ class TankModule3:
 if __name__ == "__main__":
     t = TankModule3()
     t.start()
-    
 
     """
     with open('main.py', 'w') as file:
@@ -1280,6 +1449,19 @@ if __name__ == "__main__":
 # Tank module
 # -------------------------
 
+def determine_pico_board_variant(wifi_or_ethernet):
+    machine_str = os.uname().machine
+    print(f"os.uname().machine = {machine_str!r}")
+    if "RP2350" in machine_str:
+        return "PicoWiznetEth2350"
+    if "RP2040" in machine_str:
+        if wifi_or_ethernet == 'ethernet':
+            return "PicoWiznetEth2040"
+        if wifi_or_ethernet == 'wifi':
+            return "PicoRaspberryWifi2040"
+    return "Unknown"
+
+
 def provision_tank_module():
     """Configure tank module app_config.json"""
     # Get tank name
@@ -1362,7 +1544,7 @@ elif 'main_revert.py' in os.listdir():
         file.write(bootpy_code)
     print(f"Wrote 'boot.py' on the Pico.")
     
-    print(f"\n{'-'*40}\n[1/4] Success! Found hardware ID and wrote 'boot.py'.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[1/3] Success! Found hardware ID and wrote 'boot.py'.\n{'-'*40}\n")
 
     # -------------------------
     # Write comms_config.json
@@ -1370,25 +1552,28 @@ elif 'main_revert.py' in os.listdir():
 
     have_wifi_or_ethernet = False
     while not have_wifi_or_ethernet:
-        wifi_or_ethernet = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
-        if wifi_or_ethernet not in {'w','e'}:
+        transport_choice = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
+        if transport_choice not in {'w', 'e'}:
             print("Invalid entry. Please enter either 'w' or 'e'.")
         else:
             have_wifi_or_ethernet = True
-    
-    # Connect to wifi
-    if wifi_or_ethernet == 'w':
+
+    if transport_choice == 'w':
+        wifi_or_ethernet = 'wifi'
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
         wlan.disconnect()
         while wlan.isconnected():
             utime.sleep(0.1)
-        
+
         while not wlan.isconnected():
             wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
             if wifi_name == "":
                 wifi_name = "GridWorks"
             wifi_pass = input("Enter wifi password: ")
+            wlan.disconnect()
+            while wlan.isconnected():
+                utime.sleep(0.1)
             time_waiting_connection = 0
             wlan.connect(wifi_name, wifi_pass)
             while not wlan.isconnected():
@@ -1401,8 +1586,8 @@ elif 'main_revert.py' in os.listdir():
                     break
         print(f"Connected to wifi '{wifi_name}'.\n")
 
-    # Connect to ethernet
-    elif wifi_or_ethernet == 'e':
+    elif transport_choice == 'e':
+        wifi_or_ethernet = 'ethernet'
         nic = network.WIZNET5K()
         for attempt in range(3):
             try:
@@ -1421,6 +1606,9 @@ elif 'main_revert.py' in os.listdir():
                     raise RuntimeError("Failed to connect to Ethernet (timeout)")
                 utime.sleep(0.5)
         print("Connected to Ethernet")
+
+    pico_board_variant = determine_pico_board_variant(wifi_or_ethernet)
+    print(f"PicoBoardVariant = {pico_board_variant}")
 
     # Connect to API
 
@@ -1456,24 +1644,26 @@ elif 'main_revert.py' in os.listdir():
     backup_url = f"http://{hostname}.local:8000"
 
     # Write the parameters to comms_config.json
-    if wifi_or_ethernet=='w':
+    if wifi_or_ethernet == 'wifi':
         comms_config_content = {
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
-            "WifiPassword": wifi_pass, 
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "WifiPassword": wifi_pass,
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
-    elif wifi_or_ethernet=='e':
+    elif wifi_or_ethernet == 'ethernet':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)
 
-    print(f"\n{'-'*40}\n[2/4] Success! Wrote 'comms_config.json' on the Pico.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[2/3] Success! Wrote 'comms_config.json' on the Pico.\n{'-'*40}\n")
 
     # -------------------------
     # Write app_config.json and main code
@@ -1487,13 +1677,13 @@ elif 'main_revert.py' in os.listdir():
     if device_type == '0':
         actor_name = provision_tank_module()
         print("This is a tank module")
+        write_net_py()
         write_tank_module_3_main()
     elif device_type == '1':
         actor_name = provision_btu_meter()
         print("This is a BTU meter.")
         write_btu_meter_main()
-        
 
-    print(f"\n{'-'*40}\n[4/4] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[3/3] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
 
     print("The Pico is set up. It is now ready to use.")
