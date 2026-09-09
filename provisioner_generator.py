@@ -91,11 +91,10 @@ def determine_pico_board_variant(wifi_or_ethernet):
     print(f"os.uname().machine = {machine_str!r}")
     if "RP2350" in machine_str:
         return "PicoWiznetEth2350"
-    if "RP2040" in machine_str:
-        if wifi_or_ethernet == 'ethernet':
-            return "PicoWiznetEth2040"
-        if wifi_or_ethernet == 'wifi':
-            return "PicoRaspberryWifi2040"
+    elif machine_str=="Raspberry Pi Pico W with RP2040":
+        return "PicoRaspberryWifi2040"
+    elif machine_str=="W5500-EVB-Pico with RP2040":
+        return "PicoWiznetEth2040"
     return "Unknown"
 
 

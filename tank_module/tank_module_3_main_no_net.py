@@ -270,11 +270,10 @@ class TankModule3:
         machine_str = os.uname().machine
         if "RP2350" in machine_str:
             return "PicoWiznetEth2350"
-        if "RP2040" in machine_str:
-            if self.wifi_or_ethernet == 'ethernet':
-                return "PicoWiznetEth2040"
-            if self.wifi_or_ethernet == 'wifi':
-                return "PicoRaspberryWifi2040"
+        elif machine_str=="Raspberry Pi Pico W with RP2040":
+            return "PicoRaspberryWifi2040"
+        elif machine_str=="W5500-EVB-Pico with RP2040":
+            return "PicoWiznetEth2040"
         return "Unknown"
 
     # ---------------------------------
