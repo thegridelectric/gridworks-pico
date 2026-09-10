@@ -4,7 +4,6 @@ from machine import Pin
 import utime
 import ujson
 import ubinascii
-import urequests
 import math
 
 import net
@@ -35,7 +34,6 @@ ADC2_PIN = 28 # Current Transformer
 # Other constants
 SAMPLES = 1000
 NUM_SAMPLE_AVERAGES = 1
-BASE_URL_RETRY_SECONDS = 300
 RECONNECT_COOLDOWN_S = 30
 ADC_REF_V = 3.3
 R_FIXED_KOHMS = 5.6
@@ -89,14 +87,18 @@ class AsyncBtuMeter:
 
         # Load configurations
         self.load_comms_config()
-        self.use_ip_failed = False
-        self.last_ip_retry = utime.time()
         try:
             with open(APP_CONFIG_FILE, "r") as f:
                 app_config = ujson.load(f)
         except:
             app_config = {}
         self.load_app_config(app_config)
+        self.http = net.HttpClient(
+            base_url=self.base_url,
+            backup_url=self.backup_url,
+            hw_uid=self.hw_uid,
+            actor_node_name=self.actor_node_name
+        )
 
         # Flow measurement state
         self._tick_count = 0 # Only modified by pulse_callback (ISR)
@@ -148,133 +150,6 @@ class AsyncBtuMeter:
     # Communication
     # ---------------------------------
 
-    def post_with_fallback(self, endpoint, payload):
-        # POST to SCADA with IP/DNS fallback.
-        # Tries IP twice with short timeout, then falls back to DNS if needed.
-
-        # Returns:
-        #      - Response object if successful (200 status)
-        #      - None if endpoint doesn't exist (404) or other non-critical failure
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        
-        # Check if it's time to retry IP address
-        if self.use_ip_failed:
-            time_since_last_retry = utime.time() - self.last_ip_retry
-            if time_since_last_retry > BASE_URL_RETRY_SECONDS:
-                print(f"Retrying IP address after {time_since_last_retry}s")
-                self.last_ip_retry = utime.time()
-                # Quick test of IP connectivity
-                if self._test_url(self.ip_url):
-                    print("IP address is back online")
-                    self.use_ip_failed = False
-        
-        # Select URL: use DNS if IP has failed, otherwise use IP
-        url = self.dns_url if self.use_ip_failed else self.ip_url
-
-        max_attempts = 2 if url == self.ip_url else 1
-
-        for attempt in range(max_attempts):
-            try:
-                if attempt > 0:
-                    print(f"Retry {attempt} for {url}")
-
-                response = urequests.post(url+endpoint, data=json_payload, headers=headers, timeout=3)
-                if response.status_code == 200:
-                    return response
-                elif response.status_code == 404:
-                    # Server is reachable but endpoint doesn't exist
-                    # This is NOT a connectivity failure, so don't mark IP as failed
-                    print(f"Endpoint {endpoint} not found (404) - server IS reachable")
-                    response.close()
-                    return None
-                else:
-                    print(f"Status: {response.status_code}")
-                    response.close()
-                    if response.status_code >= 500 and attempt < max_attempts - 1:
-                        continue  # Retry on server errors
-                    return None
-                
-            except Exception as e:
-                print(f"Attempt {attempt+1} failed: {e}")
-
-                if attempt < max_attempts - 1:
-                    utime.sleep_ms(50)  # Brief pause before retry
-                    continue
-
-                # Only handle failover if we were using IP address
-                if url == self.ip_url:
-                    # Test if IP is truly unreachable (not just this endpoint)
-                    if not self._test_url(self.ip_url):
-                        msg = f"switching to DNS {self.dns_url}"
-                        print(msg)
-                        self.use_ip_failed = True
-                        self.last_ip_retry = utime.time()
-
-                        # Send alert about IP failure
-                        try:
-                            self.send_baseurl_failure_alert(msg)
-                        except Exception:
-                            pass
-
-                        # Try DNS URL as fallback
-                        if self.dns_url:
-                            print(f"Trying DNS fallback {self.dns_url}")
-                            try:
-                                response = urequests.post(self.dns_url+endpoint,
-                                                        data=json_payload,
-                                                        headers=headers,
-                                                        timeout=5)
-                                print(f"DNS responded with status: {response.status_code}")
-
-                                if response.status_code == 200:
-                                    print("DNS fallback successful")
-                                    return response
-                                elif response.status_code == 404:
-                                    print(f"Endpoint {endpoint} not found via DNS (404)")
-                                    response.close()
-                                    return None
-                                else:
-                                    print(f"DNS returned status: {response.status_code}")
-                                    response.close()
-                                    return None
-
-                            except Exception as dns_e:
-                                print(f"DNS also failed: {dns_e}")
-                                self.needs_reconnect = True
-                                return None
-                    else:
-                        # IP is reachable but this specific request failed
-                        # Could be timeout, connection reset, etc.
-                        print(f"IP is reachable but request failed: {e}")
-                        return None
-                else:
-                    # We were already using DNS and it failed
-                    print(f"DNS request failed: {e}")
-                    self.needs_reconnect = True
-                    return None
-
-            # Shouldn't get here, but just in case
-            return None
-
-    def send_baseurl_failure_alert(self, message):
-        alert_payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "BaseUrl": self.ip_url,
-            "Message": message,
-            "TypeName": "baseurl.failure.alert",
-            "Version": "100"
-        }
-        if self.dns_url:
-            try:
-                url = self.dns_url + f"/{self.actor_node_name}/baseurl-failure-alert"
-                headers = {'Content-Type': 'application/json'}
-                response = urequests.post(url, data=ujson.dumps(alert_payload), headers=headers, timeout=3)
-                response.close()
-            except:
-                pass
-
     def try_to_reconnect(self):
         self.time_last_tried_to_reconnect = utime.time()
         try:
@@ -298,9 +173,9 @@ class AsyncBtuMeter:
         self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
-        self.ip_url = comms_config.get("BaseUrl", None)
-        self.dns_url = comms_config.get("BackupUrl", None)
-        print(f"After loading - ip_url: {self.ip_url}, dns_url: {self.dns_url}")
+        self.base_url = comms_config.get("BaseUrl", None)
+        self.backup_url = comms_config.get("BackupUrl", None)
+        print(f"After loading - base_url: {self.base_url}, backup_url: {self.backup_url}")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -310,7 +185,7 @@ class AsyncBtuMeter:
             pass
         else:
             raise KeyError("WifiOrEthernet must exost amd be either 'wifi' or 'ethernet' in comms_config.json")
-        if self.ip_url is None:
+        if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
 
     def determine_pico_board_variant(self, configured):
@@ -330,58 +205,45 @@ class AsyncBtuMeter:
             return "PicoWiznetEth2040"
         return "Unknown"
 
-    def _test_url(self, url):
-        #Test if a URL is reachable#
-        try:
-            test = url + "/ping"
-            response = urequests.get(test, timeout=3)
-            success = response.status_code == 200
-            response.close()
-            return success
-        except:
-            return False
-    
     def update_comms_config(self):
-        endpoint = f"/{self.actor_node_name}/pico-comms-params"
         payload = {
             "HwUid": self.hw_uid,
-            "BaseUrl": self.ip_url,
-            "BackupUrl": self.dns_url,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.params",
             "Version": "000"
         }
-        try:
-            response = self.post_with_fallback(endpoint, payload)
-            if response and response.status_code == 200:
-                new_config = response.json()
-                 #Track if we made changes
-                config_changed = False
-                # Only update if the new URLs actually work
-                new_base = new_config.get("BaseUrl", self.ip_url)
-                if new_base != self.ip_url and self._test_url(new_base):
-                    self.ip_url = new_base
-                    config_changed = True
+        status, new_config = self.http.post(
+            f"/{self.actor_node_name}/pico-comms-params",
+            payload,
+            mode=1
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not isinstance(new_config, dict):
+            return
 
-                # Only update BackupUrl if different and working  
-                new_backup = new_config.get("BackupUrl", self.dns_url)
-                if new_backup != self.dns_url and self._test_url(new_backup):
-                    self.dns_url = new_backup
-                    config_changed = True
+        # Only adopt urls that answer their /ping
+        config_changed = False
+        new_base = new_config.get("BaseUrl", self.base_url)
+        if new_base and new_base != self.base_url and self.http.is_reachable(new_base):
+            self.base_url = new_base
+            config_changed = True
 
-                if config_changed:
-                    self.save_comms_config()
+        new_backup = new_config.get("BackupUrl", self.backup_url)
+        if new_backup and new_backup != self.backup_url and self.http.is_reachable(new_backup):
+            self.backup_url = new_backup
+            config_changed = True
 
-        except Exception as e:
-            print(f"Config update error: {e}")
-        finally:
-            if response and response.status_code == 200:
-                response.close()
+        if config_changed:
+            self.http.set_urls(self.base_url, self.backup_url)
+            self.save_comms_config()
 
     def save_comms_config(self):
         config = {
             "WifiOrEthernet": self.wifi_or_ethernet,
-            "BaseUrl": self.ip_url,
-            "BackupUrl": self.dns_url,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.config",
             "Version": "000"
         }
@@ -448,19 +310,15 @@ class AsyncBtuMeter:
 
     def update_app_config(self):
         current = self.current_async_btu_params()
-        response = self.post_with_fallback(
+        status, updated_config = self.http.post(
             f"/{self.actor_node_name}/async-btu-params",
             current,
+            mode=1
         )
-        if not response:
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not updated_config:
             return
-
-        try:
-            updated_config = response.json()
-        except:
-            return
-        finally:
-            response.close()
 
         PARAM_KEYS = (
             "ActorNodeName",
@@ -492,6 +350,7 @@ class AsyncBtuMeter:
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
+        self.http.actor_node_name = self.actor_node_name
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
@@ -508,22 +367,14 @@ class AsyncBtuMeter:
             "TypeName": "new.code",
             "Version": "100"
         }
-        response = self.post_with_fallback(
+        status, content = self.http.post(
             f"/{self.actor_node_name}/code-update",
             payload,
+            mode=2  # raw bytes
         )
-        if not response:
-            return
-
-        content = None
-        try:
-            if response.status_code != 200:
-                return
-            content = response.content
-        finally:
-            response.close()
-
-        if not content:
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not content:
             return
 
         # JSON response → no update pending
@@ -843,11 +694,12 @@ class AsyncBtuMeter:
             if flow_val is None and self.hot is None and self.cold is None:
                 print(f"Skipping async - missing data: flow: {flow_val}{flow_unit}, hot={self.hot}, cold={self.cold}")
                 return
-            if 100 * abs(self.gpm - self.last_sent_gpm) > self.async_capture_delta_gpm_x_100:
-                about_nodes.append(self.flow_channel_name)
-                measurements.append(round(flow_val * 100))
-                units.append(flow_unit)
-                print(f"Flow changed: {self.last_sent_gpm:.3f} -> {self.gpm:.3f} GPM")
+            if flow_val is not None and self.gpm is not None:
+                if 100 * abs(self.gpm - self.last_sent_gpm) > self.async_capture_delta_gpm_x_100:
+                    about_nodes.append(self.flow_channel_name)
+                    measurements.append(round(flow_val * 100))
+                    units.append(flow_unit)
+                    print(f"Flow changed: {self.last_sent_gpm:.3f} -> {self.gpm:.3f} GPM")
             
             if self.hot is not None:
                 if 100 * abs(self.hot - self.last_sent_hot) > self.async_capture_delta_celsius_x_100:
@@ -872,27 +724,7 @@ class AsyncBtuMeter:
             if about_nodes:
                 self.post_btu_data(about_nodes, measurements, units)
 
-    def sync_report(self, timer):
-        if self.gpm is None or self.hot is None or self.cold is None:
-            return
-        about_nodes = [self.flow_channel_name, self.hot_channel_name, self.cold_channel_name]
-        measurements = [
-            round(self.gpm * 100),  # GpmTimes100
-            round(self.hot * 100),  # CelsiusTimes100
-            round(self.cold * 100), # CelsiusTImes100
-        ]
-        units = ["GpmTimes100", "CelsiusTimes100", "CelsiusTimes100"]
-
-        # add ct voltage if configured
-        if self.read_ct_voltage and self.pump_ct_voltage is not None:
-            about_nodes.append(self.ct_channel_name)
-            measurements.append(round(self.pump_ct_voltage * 100))
-            units.append("VoltsTimes100")
-
-        self.post_btu_data(about_nodes, measurements, units)
-
     def post_btu_data(self, about_nodes, measurements, units):
-        endpoint = f"/{self.actor_node_name}/multichannel-snapshot"
         payload = {
                 "HwUid": self.hw_uid,
                 "ChannelNameList": about_nodes,
@@ -901,21 +733,24 @@ class AsyncBtuMeter:
                 "TypeName": "multichannel.snapshot",
                 "Version": "000"
             }
-        response = self.post_with_fallback(endpoint, payload)
+        status = self.http.post_fire_and_forget(
+            f"/{self.actor_node_name}/multichannel-snapshot",
+            payload
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200:
+            return False
 
-        if response:
-            response.close()
-            if self.flow_channel_name in about_nodes:
-                self.last_sent_gpm = self.gpm
-            if self.hot_channel_name in about_nodes:
-                self.last_sent_hot = self.hot
-            if self.cold_channel_name in about_nodes:
-                self.last_sent_cold = self.cold
-            if self.read_ct_voltage and self.ct_channel_name in about_nodes:
-                self.last_sent_pump_ct_voltage = self.pump_ct_voltage
-            return True
-
-        return False
+        if self.flow_channel_name in about_nodes:
+            self.last_sent_gpm = self.gpm
+        if self.hot_channel_name in about_nodes:
+            self.last_sent_hot = self.hot
+        if self.cold_channel_name in about_nodes:
+            self.last_sent_cold = self.cold
+        if self.read_ct_voltage and self.ct_channel_name in about_nodes:
+            self.last_sent_pump_ct_voltage = self.pump_ct_voltage
+        return True
 
     def start_timers(self):
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
@@ -950,7 +785,8 @@ class AsyncBtuMeter:
                 # Give pulse callback the chance to cleanly catch its first
                 # timestamp. Slowest ~ 15 Hz / 67 ms
                 utime.sleep_ms(100)
-                print(f"{self.gpm:.2f} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
+                gpm_str = "None" if self.gpm is None else f"{self.gpm:.2f}"
+                print(f"{gpm_str} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
                 self.report()
                 self.pending_async_check = False
             utime.sleep_ms(1) 

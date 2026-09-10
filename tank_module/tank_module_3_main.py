@@ -69,13 +69,18 @@ class TankModule3:
 
         # Load configurations
         self.load_comms_config()
-        self.http = net.HttpClient(base_url=self.base_url)
         try:
             with open(APP_CONFIG_FILE, "r") as f:
                 app_config = ujson.load(f)
         except:
             app_config = {}
         self.load_app_config(app_config)
+        self.http = net.HttpClient(
+            base_url=self.base_url,
+            backup_url=self.backup_url,
+            hw_uid=self.hw_uid,
+            actor_node_name=self.actor_node_name
+        )
 
         # Measuring and repoting voltages
         self.prev_mv0 = -1
@@ -133,6 +138,7 @@ class TankModule3:
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
+        self.backup_url = comms_config.get("BackupUrl")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -231,6 +237,7 @@ class TankModule3:
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
+        self.http.actor_node_name = self.actor_node_name
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
