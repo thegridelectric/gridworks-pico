@@ -8,18 +8,12 @@ import ubinascii
 import net
 
 # ---------------------------------
-# Constants
+# Constants and helper functions
 # ---------------------------------
 
 # Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
-PICO_BOARD_VARIANTS = (
-    "PicoWiznetEth2040",
-    "PicoWiznetEth2350",
-    "PicoRaspberryWifi2040",
-    "Unknown",
-)
 
 # Default parameters
 DEFAULT_ACTOR_NAME = "tank"
@@ -28,14 +22,21 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
-ADC_REF_UV = 3_300_000
+# Pin numbers
+ADC0_PIN = 26
+ADC1_PIN = 27
+ADC2_PIN = 28
 
 # Other constants
-ADC0_PIN_NUMBER = 26
-ADC1_PIN_NUMBER = 27
-ADC2_PIN_NUMBER = 28
-
 RECONNECT_COOLDOWN_S = 30
+ADC_REF_UV = 3_300_000
+
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
 
 
 def _atomic_write(path, data):
@@ -53,19 +54,20 @@ def _atomic_write(path, data):
 # ---------------------------------
 
 class TankModule3:
-
     def __init__(self):
         # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
-        # Release any ADC pull-down/pull-up resistors
-        Pin(26, Pin.IN)
-        Pin(27, Pin.IN)
-        Pin(28, Pin.IN)
-        # Set Pin as ADC
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
-        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
+
+        # Pins
+        Pin(ADC0_PIN, Pin.IN)
+        Pin(ADC1_PIN, Pin.IN)
+        Pin(ADC2_PIN, Pin.IN)
+        self.adc0 = machine.ADC(ADC0_PIN)
+        self.adc1 = machine.ADC(ADC1_PIN)
+        self.adc2 = machine.ADC(ADC2_PIN)
+
+        # Load configurations
         self.load_comms_config()
         self.http = net.HttpClient(base_url=self.base_url)
         try:
@@ -74,6 +76,7 @@ class TankModule3:
         except:
             app_config = {}
         self.load_app_config(app_config)
+
         # Measuring and repoting voltages
         self.prev_mv0 = -1
         self.prev_mv1 = -1
@@ -83,12 +86,15 @@ class TankModule3:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
-        self.needs_reconnect = False
-        self.time_last_tried_to_reconnect = utime.time()
+
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
         self.sync_flag = False
         self.sync_report_timer = machine.Timer(-1)
+
+        # Reconnect
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
 
     def set_names(self):
         if self.actor_node_name is None:
@@ -102,9 +108,21 @@ class TankModule3:
     # ---------------------------------
     # Communication
     # ---------------------------------
-                                                                 
+
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
+
     def load_comms_config(self):
-        '''Load the communication configuration file (WiFi/Ethernet and API base URL)'''
+        '''Load the communication configuration file (WiFi/Ethernet and API URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
@@ -307,18 +325,6 @@ class TankModule3:
             mode=machine.Timer.PERIODIC,
             callback=self.sync_report
         )
-
-    def try_to_reconnect(self):
-        self.time_last_tried_to_reconnect = utime.time()
-        try:
-            if self.wifi_or_ethernet == 'wifi':
-                if not net.is_wifi_connected():
-                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
-            elif self.wifi_or_ethernet == 'ethernet':
-                if not net.is_ethernet_connected():
-                    net.connect_to_ethernet()
-        except Exception as e:
-            print(f"Error when trying to reconnect ({e})")
 
     def main_loop(self):
         while True:
