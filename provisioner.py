@@ -19,26 +19,251 @@ if 'main.py' in os.listdir():
     os.remove('main.py')
 if 'main_previous.py' in os.listdir():
     os.remove('main_previous.py')
+if 'net.py' in os.listdir():
+    os.remove('net.py')
 
 # *************************
 # 1/3 - MAIN.PY PROVISION
 # *************************
 
+def write_net_py():
+    net_code = """
+import network
+import utime
+import urequests
+import ujson
+import gc
+
+CONNECT_TIMEOUT_S = 10
+
+HEADERS = {"Content-Type": "application/json"}
+BASE_URL_ATTEMPTS = 2
+BASE_URL_RETRY_S = 300
+POST_TIMEOUT_S = 3
+BACKUP_POST_TIMEOUT_S = 5
+PING_TIMEOUT_S = 3
+
+_wlan = None
+_ethernet_nic = None
+
+
+def connect_to_wifi(name, password, timeout_s=CONNECT_TIMEOUT_S):
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    _wlan.active(True)
+    if not _wlan.isconnected():
+        print("Connecting to wifi...")
+        _wlan.connect(name, password)
+        start = utime.time()
+        while not _wlan.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to WiFi (timeout)")
+            utime.sleep_ms(500)
+    print(f"Connected to wifi {name}")
+
+
+def is_wifi_connected():
+    global _wlan
+    if _wlan is None:
+        _wlan = network.WLAN(network.STA_IF)
+    return _wlan.isconnected()
+
+
+def connect_to_ethernet(timeout_s=CONNECT_TIMEOUT_S):
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        _ethernet_nic = network.WIZNET5K()
+    for _ in range(3):
+        try:
+            _ethernet_nic.active(True)
+            break
+        except:
+            utime.sleep_ms(500)
+
+    if not _ethernet_nic.isconnected():
+        print("Connecting to Ethernet...")
+        _ethernet_nic.ifconfig('dhcp')
+        start = utime.time()
+        while not _ethernet_nic.isconnected():
+            if utime.time() - start > timeout_s:
+                raise RuntimeError("Failed to connect to Ethernet (timeout)")
+            utime.sleep_ms(500)
+    print("Connected to Ethernet")
+
+
+def is_ethernet_connected():
+    global _ethernet_nic
+    if _ethernet_nic is None:
+        return False
+    return _ethernet_nic.isconnected()
+
+
+class HttpClient:
+    '''POST to scada, failing over from base_url to backup_url.
+
+    base_url is the primary (an IP address in the field) and backup_url is
+    the DNS name. Once base_url stops answering its /ping we post to
+    backup_url instead, and only re-test base_url every BASE_URL_RETRY_S.
+    Failing over also posts a baseurl.failure.alert over backup_url, which
+    needs actor_node_name: the caller keeps that attribute up to date.
+    '''
+
+    def __init__(self, base_url, backup_url=None, hw_uid=None, actor_node_name=None):
+        self.hw_uid = hw_uid
+        self.actor_node_name = actor_node_name
+        self.base_url = base_url.rstrip("/")
+        self.backup_url = None if not backup_url else backup_url.rstrip("/")
+        self.base_url_failed = False
+        self.last_base_url_retry = utime.time()
+
+    def post(self, path, payload, mode=0):
+        '''POST payload to path, on base_url or backup_url.
+
+        mode: 0=ignore body, 1=json, 2=bytes
+        Returns (status, body). A status of None means no url gave any HTTP
+        response, which is how the caller knows the link may be down. Any
+        status at all, 404 and 500 included, means scada answered.
+        '''
+        body = ujson.dumps(payload)
+        self._retry_base_url_if_due()
+
+        if self.base_url_failed:
+            return self._post_to(self.backup_url, path, body, mode, 1, BACKUP_POST_TIMEOUT_S)
+
+        status, result = self._post_to(
+            self.base_url, path, body, mode, BASE_URL_ATTEMPTS, POST_TIMEOUT_S
+        )
+        if status is not None:
+            return status, result
+
+        if self.is_reachable(self.base_url):
+            print(f"{self.base_url} is reachable but the request failed")
+            return None, None
+
+        return self._fail_over_to_backup(path, body, mode)
+
+    def post_fire_and_forget(self, path, payload):
+        status, _ = self.post(path, payload)
+        return status
+
+    def is_reachable(self, url):
+        r = None
+        try:
+            r = urequests.get(url + "/ping", timeout=PING_TIMEOUT_S)
+            return r.status_code == 200
+        except:
+            return False
+        finally:
+            self._close(r)
+            gc.collect()
+
+    def _close(self, r):
+        if r:
+            try:
+                r.close()
+            except:
+                pass
+
+    def _post_to(self, url, path, body, mode, attempts, timeout_s):
+        for attempt in range(attempts):
+            if attempt > 0:
+                print(f"Retry {attempt} for {url}{path}")
+            r = None
+            raw = None
+            try:
+                r = urequests.post(url + path, data=body, headers=HEADERS, timeout=timeout_s)
+                status = r.status_code
+                if status == 200:
+                    raw = r.content if mode == 2 else (r.text if mode == 1 else None)
+                elif status == 404:
+                    print(f"{path} not found (404) on {url}")
+                else:
+                    print(f"{url}{path} returned status {status}")
+                    if status >= 500 and attempt < attempts - 1:
+                        continue
+            except Exception as e:
+                print(f"Attempt {attempt+1} for {url}{path} failed: {e}")
+                if attempt < attempts - 1:
+                    utime.sleep_ms(50)
+                    continue
+                return None, None
+            finally:
+                self._close(r)
+                gc.collect()
+
+            if mode == 1 and raw:
+                try:
+                    return status, ujson.loads(raw)
+                except:
+                    return status, None
+            return status, raw
+
+        return None, None
+
+    def _retry_base_url_if_due(self):
+        if not self.base_url_failed:
+            return
+        waited = utime.time() - self.last_base_url_retry
+        if waited <= BASE_URL_RETRY_S:
+            return
+        print(f"Retrying {self.base_url} after {waited}s")
+        self.last_base_url_retry = utime.time()
+        if self.is_reachable(self.base_url):
+            print(f"{self.base_url} is back online")
+            self.base_url_failed = False
+
+    def _fail_over_to_backup(self, path, body, mode):
+        if not self.backup_url:
+            return None, None
+        message = f"switching to backup url {self.backup_url}"
+        print(message)
+        self.base_url_failed = True
+        self.last_base_url_retry = utime.time()
+        self._alert_base_url_failure(message)
+        return self._post_to(self.backup_url, path, body, mode, 1, BACKUP_POST_TIMEOUT_S)
+
+    def _alert_base_url_failure(self, message):
+        if self.actor_node_name is None:
+            return
+        payload = {
+            "HwUid": self.hw_uid,
+            "ActorNodeName": self.actor_node_name,
+            "BaseUrl": self.base_url,
+            "Message": message,
+            "TypeName": "baseurl.failure.alert",
+            "Version": "100"
+        }
+        r = None
+        try:
+            r = urequests.post(
+                self.backup_url + f"/{self.actor_node_name}/baseurl-failure-alert",
+                data=ujson.dumps(payload),
+                headers=HEADERS,
+                timeout=POST_TIMEOUT_S
+            )
+        except Exception as e:
+            print(f"Could not post baseurl failure alert ({e})")
+        finally:
+            self._close(r)
+            gc.collect()
+    """
+    with open('net.py', 'w') as file:
+        file.write(net_code)
+
 def write_tank_module_3_main():
     main_code = """
-
+import os
 import machine
 from machine import Pin
 import utime
-import network
 import ujson
-import urequests
 import ubinascii
-import utime
-import gc
+
+import net
 
 # ---------------------------------
-# Constants
+# Constants and helper functions
 # ---------------------------------
 
 # Configuration files
@@ -52,34 +277,66 @@ DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_SAMPLES = 1000
 DEFAULT_NUM_SAMPLE_AVERAGES = 10
 
-ADC_REF_V = 3.3
+# Pin numbers
+ADC0_PIN = 26
+ADC1_PIN = 27
+ADC2_PIN = 28
 
 # Other constants
-ADC0_PIN_NUMBER = 26
-ADC1_PIN_NUMBER = 27
-ADC2_PIN_NUMBER = 28
+RECONNECT_COOLDOWN_S = 30
+ADC_REF_UV = 3_300_000
+
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
+
+
+def _atomic_write(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+    os.sync()
+    os.rename(tmp, path)
+    os.sync()
+
 
 # ---------------------------------
 # Main class
 # ---------------------------------
 
 class TankModule3:
-
     def __init__(self):
         # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
-        # Release any ADC pull-down/pull-up resistors
-        Pin(26, Pin.IN)
-        Pin(27, Pin.IN)
-        Pin(28, Pin.IN)
-        # Set Pin as ADC
-        self.adc0 = machine.ADC(ADC0_PIN_NUMBER)
-        self.adc1 = machine.ADC(ADC1_PIN_NUMBER)
-        self.adc2 = machine.ADC(ADC2_PIN_NUMBER)
-        # Load configuration files
+
+        # Pins
+        Pin(ADC0_PIN, Pin.IN)
+        Pin(ADC1_PIN, Pin.IN)
+        Pin(ADC2_PIN, Pin.IN)
+        self.adc0 = machine.ADC(ADC0_PIN)
+        self.adc1 = machine.ADC(ADC1_PIN)
+        self.adc2 = machine.ADC(ADC2_PIN)
+
+        # Load configurations
         self.load_comms_config()
-        self.load_app_config()
+        try:
+            with open(APP_CONFIG_FILE, "r") as f:
+                app_config = ujson.load(f)
+        except:
+            app_config = {}
+        self.load_app_config(app_config)
+        self.http = net.HttpClient(
+            base_url=self.base_url,
+            backup_url=self.backup_url,
+            hw_uid=self.hw_uid,
+            actor_node_name=self.actor_node_name
+        )
+
         # Measuring and repoting voltages
         self.prev_mv0 = -1
         self.prev_mv1 = -1
@@ -89,9 +346,15 @@ class TankModule3:
         self.mv2 = None
         self.node_names = []
         self.microvolts_posted_time = utime.time()
+
         # Synchronous reporting on the minute
         self.capture_offset_seconds = 0
+        self.sync_flag = False
         self.sync_report_timer = machine.Timer(-1)
+
+        # Reconnect
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
 
     def set_names(self):
         if self.actor_node_name is None:
@@ -105,18 +368,32 @@ class TankModule3:
     # ---------------------------------
     # Communication
     # ---------------------------------
-                                                                 
+
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
+
     def load_comms_config(self):
-        '''Load the communication configuration file (WiFi/Ethernet and API base URL)'''
+        '''Load the communication configuration file (WiFi/Ethernet and API URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
+        self.backup_url = comms_config.get("BackupUrl")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -128,168 +405,154 @@ class TankModule3:
             raise KeyError("WifiOrEthernet must be either 'wifi' or 'ethernet' in comms_config.json")
         if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
-        
-    def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
-            print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
-                utime.sleep_ms(500)
-        print(f"Connected to wifi {self.wifi_name}")
 
-    def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
+    def determine_pico_board_variant(self, configured):
+        '''The physical board, as a pico.board.variant enum value.
+        comms_config.json wins when the provisioner wrote one; otherwise
+        derive it from os.uname().machine, with WifiOrEthernet as the
+        tiebreak between the two RP2040 boards. Unknown when neither
+        settles it.'''
+        if configured in PICO_BOARD_VARIANTS:
+            return configured
+        machine_str = os.uname().machine
+        if "RP2350" in machine_str:
+            return "PicoWiznetEth2350"
+        elif machine_str=="Raspberry Pi Pico W with RP2040":
+            return "PicoRaspberryWifi2040"
+        elif machine_str=="W5500-EVB-Pico with RP2040":
+            return "PicoWiznetEth2040"
+        return "Unknown"
 
     # ---------------------------------
     # Parameters
     # ---------------------------------
     
-    def load_app_config(self):
+    def load_app_config(self, app_config):
         '''
         Set parameters to their value in the app_config file if it is specified
         Otherwise set them to their default value
         '''
-        try:
-            with open(APP_CONFIG_FILE, "r") as f:
-                app_config = ujson.load(f)
-        except:
-            app_config = {}
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         self.async_capture_delta_micro_volts = app_config.get("AsyncCaptureDeltaMicroVolts", DEFAULT_ASYNC_CAPTURE_DELTA_MICRO_VOLTS)
         self.capture_period_s = app_config.get("CapturePeriodS", DEFAULT_CAPTURE_PERIOD_S)
         self.samples = app_config.get("Samples", DEFAULT_SAMPLES)
         self.num_sample_averages = app_config.get("NumSampleAverages", DEFAULT_NUM_SAMPLE_AVERAGES)
 
-    def save_app_config(self):
-        config = {
-            "ActorNodeName": self.actor_node_name,
-            "CapturePeriodS": self.capture_period_s,
-            "Samples": self.samples,
-            "NumSampleAverages":self.num_sample_averages,
-            "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
-        }
-        with open(APP_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-    
-    def update_app_config(self):
-        url = self.base_url + f"/{self.actor_node_name}/tank-module-params"
-        payload = {
+    def save_app_config(self, config_dict):
+        try:
+            _atomic_write(APP_CONFIG_FILE, ujson.dumps(config_dict).encode())
+        except Exception as e:
+            print(f"Error saving app config: {e}")
+
+    def current_tank_module_params(self):
+        return {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "CapturePeriodS": self.capture_period_s,
             "Samples": self.samples,
             "NumSampleAverages": self.num_sample_averages,
             "AsyncCaptureDeltaMicroVolts": self.async_capture_delta_micro_volts,
+            "PicoBoardVariant": self.pico_board_variant,
+            "MicropythonVersion": os.uname().release,
             "TypeName": "tank.module.params",
-            "Version": "110"
+            "Version": "200"
         }
-        headers = {"Content-Type": "application/json"}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            if response.status_code == 200:
-                updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
-                self.samples = updated_config.get("Samples", self.samples)
-                self.num_sample_averages = updated_config.get("NumSampleAverages", self.num_sample_averages)
-                self.async_capture_delta_micro_volts = updated_config.get("AsyncCaptureDeltaMicroVolts", self.async_capture_delta_micro_volts)
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                self.save_app_config()
-            response.close()
-        except Exception as e:
-            print(f"Error sending tank module params: {e}")
+
+    def update_app_config(self):
+        current = self.current_tank_module_params()
+        status, updated_config = self.http.post(
+            f"/{self.actor_node_name}/tank-module-params",
+            current,
+            mode=1
+        )
+
+        if status != 200 or not updated_config:
+            return
+
+        PARAM_KEYS = (
+            "ActorNodeName",
+            "CapturePeriodS",
+            "Samples",
+            "NumSampleAverages",
+            "AsyncCaptureDeltaMicroVolts",
+        )
+
+        changed = any(
+            k in updated_config and updated_config[k] != current[k]
+            for k in PARAM_KEYS
+        )
+
+        if not changed:
+            return
+
+        new_config = {
+            k: updated_config.get(k, current[k])
+            for k in PARAM_KEYS
+        }
+
+        self.save_app_config(new_config)
+        self.load_app_config(new_config)
+        self.http.actor_node_name = self.actor_node_name
+
+        offset = updated_config.get("CaptureOffsetS")
+        if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
+            self.capture_offset_seconds = offset
 
     # ---------------------------------
     # Code updates
     # ---------------------------------
 
     def update_code(self):
-        url = self.base_url + f"/{self.actor_node_name}/code-update"
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "TypeName": "new.code",
             "Version": "100"
         }
-        json_payload = ujson.dumps(payload)
-        headers = {"Content-Type": "application/json"}
-        response = urequests.post(url, data=json_payload, headers=headers)
-        if response.status_code == 200:
-            # If there is a pending code update then the response is a python file, otherwise json
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
+        status, content = self.http.post(
+            f"/{self.actor_node_name}/code-update",
+            payload,
+            mode=2  # raw bytes
+        )
+        if status != 200 or not content:
+            return
+
+        # JSON response → no update pending
+        if content.startswith(b"{"):
+            return
+
+        try:
+            _atomic_write("main_update.py", content)
+            machine.reset()
+        except Exception as e:
+            print("Code update failed:", e)
 
     # ---------------------------------
     # Measuring microvolts
     # ---------------------------------
 
-    def adc0_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc0.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)
-    
-    def adc1_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc1.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)
-    
-    def adc2_micros(self):
-        sample_averages = []
-        for _ in range(self.num_sample_averages):
-            readings = []
-            for _ in range(self.samples):
-                # Read the raw ADC value (0-65535)
-                readings.append(self.adc2.read_u16())
-            voltages = list(map(lambda x: x * ADC_REF_V / 65535, readings))
-            mean_1000 = int(10**6 * sum(voltages) / self.samples)
-            sample_averages.append(mean_1000)
-        return int(sum(sample_averages)/self.num_sample_averages)  
+    def adc_micros(self, adc):
+        samples = self.samples
+        averages = self.num_sample_averages
+        total_microvolts = 0
+        denom = 65535 * samples
+        read = adc.read_u16
+
+        for _ in range(averages):
+            total = 0
+            for _ in range(samples):
+                total += read()
+
+            microvolts = total * ADC_REF_UV // denom
+            total_microvolts += microvolts
+
+        return total_microvolts // averages
     
     # ---------------------------------
     # Posting microvolts
     # ---------------------------------
 
     def post_microvolts(self, idx=3):
-        url = self.base_url + f"/{self.actor_node_name}/microvolts"
         if idx==0:
             mv_list = [self.mv0]
         elif idx==1:
@@ -305,18 +568,17 @@ class TankModule3:
             "TypeName": "microvolts", 
             "Version": "100"
         }
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        try:
-            response = urequests.post(url, data=json_payload, headers=headers)
-            response.close()
-        except Exception as e:
-            print(f"Error posting microvolts: {e}")
-        gc.collect()
+        
+        status = self.http.post_fire_and_forget(
+            f"/{self.actor_node_name}/microvolts",
+            payload
+        )
+        if status is None:
+            self.needs_reconnect = True
         self.microvolts_posted_time = utime.time()
         
     def sync_report(self, timer):
-        self.post_microvolts()
+        self.sync_flag = True
 
     def start_sync_report_timer(self):
         '''Initialize the timer to call self.keep_alive periodically'''
@@ -327,13 +589,13 @@ class TankModule3:
         )
 
     def main_loop(self):
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
-        self.mv2 = self.adc2_micros()
         while True:
-            self.mv0 = self.adc0_micros()
-            self.mv1 = self.adc1_micros()
-            self.mv2 = self.adc2_micros()
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
+            self.mv0 = self.adc_micros(self.adc0)
+            self.mv1 = self.adc_micros(self.adc1)
+            self.mv2 = self.adc_micros(self.adc2)
             if abs(self.mv0 - self.prev_mv0) > self.async_capture_delta_micro_volts:
                 self.post_microvolts(idx=0)
                 self.prev_mv0 = self.mv0
@@ -343,19 +605,27 @@ class TankModule3:
             if abs(self.mv2 - self.prev_mv2) > self.async_capture_delta_micro_volts:
                 self.post_microvolts(idx=2)
                 self.prev_mv2 = self.mv2
+            if self.sync_flag:
+                self.sync_flag = False
+                self.post_microvolts()
             utime.sleep_ms(100)
 
     def start(self):
-        if self.wifi_or_ethernet=='wifi':
-            self.connect_to_wifi()
-        elif self.wifi_or_ethernet=='ethernet':
-            self.connect_to_ethernet()
+        try:
+            if self.wifi_or_ethernet=='wifi':
+                net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet=='ethernet':
+                net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Initial connect failed ({e})")
+            self.needs_reconnect = True
+            self.time_last_tried_to_reconnect = 0
         self.update_code()
         self.update_app_config()
         self.set_names()
-        self.mv0 = self.adc0_micros()
-        self.mv1 = self.adc1_micros()
-        self.mv2 = self.adc2_micros()
+        self.mv0 = self.adc_micros(self.adc0)
+        self.mv1 = self.adc_micros(self.adc1)
+        self.mv2 = self.adc_micros(self.adc2)
         self.post_microvolts()
         utime.sleep(self.capture_offset_seconds)
         self.start_sync_report_timer()
@@ -364,7 +634,6 @@ class TankModule3:
 if __name__ == "__main__":
     t = TankModule3()
     t.start()
-    
 
     """
     with open('main.py', 'w') as file:
@@ -372,85 +641,117 @@ if __name__ == "__main__":
 
 def write_btu_meter_main():
     main_code = """
+import os
 import machine
 from machine import Pin
 import utime
-import math
-import network
 import ujson
-import urequests
 import ubinascii
+import math
 
+import net
 
+# ---------------------------------
+# Constants and helper functions
+# ---------------------------------
+
+# Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
+
+# Default parameters
 DEFAULT_ACTOR_NAME = "primary-btu"
-
-ADC_REF_V = 3.3
-
-BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_GALLONS_PER_PULSE = 0.0009
 DEFAULT_ASYNC_CAPTURE_DELTA_GPM_X_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_CELSIUS_X_100 = 20
 DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100 = 20
 DEFAULT_THERMISTOR_BETA = 3977
+
+# Pin numbers
+PULSE_PIN = 22
+ADC0_PIN = 26 # Hot Temp
+ADC1_PIN = 27 # Cold Temp
+ADC2_PIN = 28 # Current Transformer
+
+# Other constants
 SAMPLES = 1000
 NUM_SAMPLE_AVERAGES = 1
+RECONNECT_COOLDOWN_S = 30
+ADC_REF_V = 3.3
+R_FIXED_KOHMS = 5.6
+THERMISTOR_R0_KOHMS = 10
+THERMISTOR_T0 = 298
+
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
+
+
+def _atomic_write(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+    os.sync()
+    os.rename(tmp, path)
+    os.sync()
+
+
+# ---------------------------------
+# Main class
+# ---------------------------------
 
 class AsyncBtuMeter:
-    # BTU meter with coordinated measure of flow, temp and pump power.
-    # Designed for async reporting on change for all 3 and also
-    # synchronous reporting happening at a default of 60 seconds
-
-    # Flow meter expected range: 15-150 Hz (67ms - 6.7ms periods)
-    # Jitter threshold: > 400 Hz (< 2.5ms period) indicates physical bounce
-    #
-    # self.read_ct is True iff CtNodeName is not None
-
-    PULSE_PIN = 22
-    ADC0_PIN = 26 # Hot Temp
-    ADC1_PIN = 27 # Cold Temp
-    ADC2_PIN = 28 # Current Transformer
-
-    FLOW_TIMEOUT_MS = 100
-
-    R_FIXED_KOHMS = 5.6
-    THERMISTOR_R0_KOHMS = 10
-    THERMISTOR_T0 = 298
-
+    '''
+    BTU meter with coordinated measure of flow, temp and pump power.
+    Designed for async reporting on change for all 3 and also
+    synchronous reporting happening at a default of 60 seconds
+    Flow meter expected range: 15-150 Hz (67ms - 6.7ms periods)
+    Jitter threshold: > 400 Hz (< 2.5ms period) indicates physical bounce
+    self.read_ct is True iff CtNodeName is not None
+    '''
     def __init__(self):
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
+
+        # Pins
+        Pin(ADC0_PIN, Pin.IN)
+        Pin(ADC1_PIN, Pin.IN)
+        Pin(ADC2_PIN, Pin.IN)
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.adc_hot = machine.ADC(ADC0_PIN)
+        self.adc_cold = machine.ADC(ADC1_PIN)
+        self.adc_ct = machine.ADC(ADC2_PIN)
+
+        # Load configurations
         self.load_comms_config()
-        self.use_ip_failed = False
-        self.last_base_url_retry = utime.time()
-        self.load_app_config()
-
-        # Hardware setup
-        # Release any ADC pull-down/pull-up resistors
-        Pin(26, Pin.IN)
-        Pin(27, Pin.IN)
-        Pin(28, Pin.IN)
-        self.pulse_pin = machine.Pin(self.PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.adc_hot = machine.ADC(self.ADC0_PIN)
-
-        self.adc_cold = machine.ADC(self.ADC1_PIN)
-        self.adc_ct = machine.ADC(self.ADC2_PIN)
+        try:
+            with open(APP_CONFIG_FILE, "r") as f:
+                app_config = ujson.load(f)
+        except:
+            app_config = {}
+        self.load_app_config(app_config)
+        self.http = net.HttpClient(
+            base_url=self.base_url,
+            backup_url=self.backup_url,
+            hw_uid=self.hw_uid,
+            actor_node_name=self.actor_node_name
+        )
 
         # Flow measurement state
         self._tick_count = 0 # Only modified by pulse_callback (ISR)
-        
         self.ready_for_new_measurement = True
-        self.last_tick_ms = utime.ticks_ms()
         self.measurement_start_ms = None  # this signals no flow
         self.completed_elapsed_ms = None
         self.completed_tick_count = 0
-
         self.flow_data_ready = False # set True by pulse_callback, False by flow_timer 
 
         # Measurements
-
         self.gpm = None
         self.hz = None
         self.hot = None
@@ -463,7 +764,7 @@ class AsyncBtuMeter:
         self.last_sent_cold = -999
         self.last_sent_pump_ct_voltage = -999
 
-        #Timers
+        # Timers
         self.last_sync_report_s = 0
         self.capture_offset_seconds = 0 
         self.temp_timer = machine.Timer(-1)
@@ -483,193 +784,41 @@ class AsyncBtuMeter:
         self.avg_double = 20000
         self.last_pulse_us = None
         self.toss_measurement = False
-                                                                 
-    def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
-            print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
-                utime.sleep_ms(500)
-        print(f"Connected to wifi {self.wifi_name}")
 
-    def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
+        # Reconnect
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
 
-    def post_with_fallback(self, endpoint, payload):
-        # POST to SCADA with IP/DNS fallback.
-        # Tries IP twice with short timeout, then falls back to DNS if needed.
+    # ---------------------------------
+    # Communication
+    # ---------------------------------
 
-        # Returns:
-        #      - Response object if successful (200 status)
-        #      - None if endpoint doesn't exist (404) or other non-critical failure
-        headers = {'Content-Type': 'application/json'}
-        json_payload = ujson.dumps(payload)
-        
-        # Check if it's time to retry IP address
-        if self.use_ip_failed:
-            time_since_last_retry = utime.time() - self.last_ip_retry
-            if time_since_last_retry > BASE_URL_RETRY_SECONDS:
-                print(f"Retrying IP address after {time_since_last_retry}s")
-                self.last_ip_retry = utime.time()
-                # Quick test of IP connectivity
-                if self._test_url(self.ip_url):
-                    print("IP address is back online")
-                    self.use_ip_failed = False
-        
-        # Select URL: use DNS if IP has failed, otherwise use IP
-        url = self.dns_url if self.use_ip_failed else self.ip_url
-
-        max_attempts = 2 if url == self.ip_url else 1
-
-        for attempt in range(max_attempts):
-            try:
-                if attempt > 0:
-                    print(f"Retry {attempt} for {url}")
-
-                response = urequests.post(url+endpoint, data=json_payload, headers=headers, timeout=3)
-                if response.status_code == 200:
-                    return response
-                elif response.status_code == 404:
-                    # Server is reachable but endpoint doesn't exist
-                    # This is NOT a connectivity failure, so don't mark IP as failed
-                    print(f"Endpoint {endpoint} not found (404) - server IS reachable")
-                    response.close()
-                    return None
-                else:
-                    print(f"Status: {response.status_code}")
-                    response.close()
-                    if response.status_code >= 500 and attempt < max_attempts - 1:
-                        continue  # Retry on server errors
-                    return None
-                
-            except Exception as e:
-                print(f"Attempt {attempt+1} failed: {e}")
-
-                if attempt < max_attempts - 1:
-                    utime.sleep_ms(50)  # Brief pause before retry
-                    continue
-
-                # Only handle failover if we were using IP address
-                if url == self.ip_url:
-                    # Test if IP is truly unreachable (not just this endpoint)
-                    if not self._test_url(self.ip_url):
-                        msg = f"switching to DNS {self.dns_url}"
-                        print(msg)
-                        self.use_ip_failed = True
-                        self.last_ip_retry = utime.time()
-
-                        # Send alert about IP failure
-                        try:
-                            self.send_baseurl_failure_alert(msg)
-                        except Exception:
-                            pass
-
-                        # Try DNS URL as fallback
-                        if self.dns_url:
-                            print(f"Trying DNS fallback {self.dns_url}")
-                            try:
-                                response = urequests.post(self.dns_url+endpoint,
-                                                        data=json_payload,
-                                                        headers=headers,
-                                                        timeout=5)
-                                print(f"DNS responded with status: {response.status_code}")
-
-                                if response.status_code == 200:
-                                    print("DNS fallback successful")
-                                    return response
-                                elif response.status_code == 404:
-                                    print(f"Endpoint {endpoint} not found via DNS (404)")
-                                    response.close()
-                                    return None
-                                else:
-                                    print(f"DNS returned status: {response.status_code}")
-                                    response.close()
-                                    return None
-
-                            except Exception as dns_e:
-                                print(f"DNS also failed: {dns_e}")
-                                return None
-                    else:
-                        # IP is reachable but this specific request failed
-                        # Could be timeout, connection reset, etc.
-                        print(f"IP is reachable but request failed: {e}")
-                        return None
-                else:
-                    # We were already using DNS and it failed
-                    print(f"DNS request failed: {e}")
-                    return None
-
-            # Shouldn't get here, but just in case
-            return None
-
-    def send_baseurl_failure_alert(self, message):
-        alert_payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "BaseUrl": self.ip_url,
-            "Message": message,
-            "TypeName": "baseurl.failure.alert",
-            "Version": "100"
-        }
-
-        if self.dns_url:
-            try:
-                url = self.dns_url + f"/{self.actor_node_name}/baseurl-failure-alert"
-                headers = {'Content-Type': 'application/json'}
-                response = urequests.post(url, data=ujson.dumps(alert_payload), headers=headers, timeout=3)
-                response.close()
-            except:
-                pass
-
-    def update_code(self):
-        endpoint = f"/{self.actor_node_name}/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "100"
-        }
-        response = self.post_with_fallback(endpoint, payload)
-        if response:
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
 
     def load_comms_config(self):
+        '''Load the communication configuration file (WiFi/Ethernet and API URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
-        self.ip_url = comms_config.get("BaseUrl", None)
-        self.dns_url = comms_config.get("BackupUrl", None)
-        print(f"After loading - ip_url: {self.ip_url}, dns_url: {self.dns_url}")
+        self.base_url = comms_config.get("BaseUrl", None)
+        self.backup_url = comms_config.get("BackupUrl", None)
+        print(f"After loading - base_url: {self.base_url}, backup_url: {self.backup_url}")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -679,62 +828,65 @@ class AsyncBtuMeter:
             pass
         else:
             raise KeyError("WifiOrEthernet must exost amd be either 'wifi' or 'ethernet' in comms_config.json")
-        if self.ip_url is None:
+        if self.base_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
-        
 
-    def _test_url(self, url):
-        #Test if a URL is reachable#
-        try:
-            test = url + "/ping"
-            response = urequests.get(test, timeout=3)
-            success = response.status_code == 200
-            response.close()
-            return success
-        except:
-            return False
-    
+    def determine_pico_board_variant(self, configured):
+        '''The physical board, as a pico.board.variant enum value.
+        comms_config.json wins when the provisioner wrote one; otherwise
+        derive it from os.uname().machine, with WifiOrEthernet as the
+        tiebreak between the two RP2040 boards. Unknown when neither
+        settles it.'''
+        if configured in PICO_BOARD_VARIANTS:
+            return configured
+        machine_str = os.uname().machine
+        if "RP2350" in machine_str:
+            return "PicoWiznetEth2350"
+        elif machine_str=="Raspberry Pi Pico W with RP2040":
+            return "PicoRaspberryWifi2040"
+        elif machine_str=="W5500-EVB-Pico with RP2040":
+            return "PicoWiznetEth2040"
+        return "Unknown"
+
     def update_comms_config(self):
-        endpoint = f"/{self.actor_node_name}/pico-comms-params"
         payload = {
             "HwUid": self.hw_uid,
-            "BaseUrl": self.ip_url,
-            "BackupUrl": self.dns_url,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.params",
             "Version": "000"
         }
-        try:
-            response = self.post_with_fallback(endpoint, payload)
-            if response and response.status_code == 200:
-                new_config = response.json()
-                 #Track if we made changes
-                config_changed = False
-                # Only update if the new URLs actually work
-                new_base = new_config.get("BaseUrl", self.ip_url)
-                if new_base != self.ip_url and self._test_url(new_base):
-                    self.ip_url = new_base
-                    config_changed = True
+        status, new_config = self.http.post(
+            f"/{self.actor_node_name}/pico-comms-params",
+            payload,
+            mode=1
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not isinstance(new_config, dict):
+            return
 
-                # Only update BackupUrl if different and working  
-                new_backup = new_config.get("BackupUrl", self.dns_url)
-                if new_backup != self.dns_url and self._test_url(new_backup):
-                    self.dns_url = new_backup
-                    config_changed = True
+        # Only adopt urls that answer their /ping
+        config_changed = False
+        new_base = new_config.get("BaseUrl", self.base_url)
+        if new_base and new_base != self.base_url and self.http.is_reachable(new_base):
+            self.base_url = new_base
+            config_changed = True
 
-                if config_changed:
-                    self.save_comms_config()
+        new_backup = new_config.get("BackupUrl", self.backup_url)
+        if new_backup and new_backup != self.backup_url and self.http.is_reachable(new_backup):
+            self.backup_url = new_backup
+            config_changed = True
 
-        except Exception as e:
-            print(f"Config update error: {e}")
-        finally:
-            if response and response.status_code == 200:
-                response.close()
+        if config_changed:
+            self.http.set_urls(self.base_url, self.backup_url)
+            self.save_comms_config()
 
     def save_comms_config(self):
         config = {
             "WifiOrEthernet": self.wifi_or_ethernet,
-            "BaseUrl": self.ip_url,
-            "BackupUrl": self.dns_url,
+            "BaseUrl": self.base_url,
+            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.config",
             "Version": "000"
         }
@@ -742,23 +894,26 @@ class AsyncBtuMeter:
             config["WifiName"] = self.wifi_name
             config["WifiPassword"] = self.wifi_password
 
-        with open(COMMS_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-
-    def load_app_config(self):
-        #Load the app config file. If PumpPowerName is None, do not read power
         try:
-            with open(APP_CONFIG_FILE, "r") as f:
-                app_config = ujson.load(f)
-        except:
-            app_config = {}
+            _atomic_write(COMMS_CONFIG_FILE, ujson.dumps(config).encode())
+        except Exception as e:
+            print(f"Error saving comms config: {e}")
+
+    # ---------------------------------
+    # Parameters
+    # ---------------------------------
+
+    def load_app_config(self, app_config):
+        '''
+        Set parameters to their value in the app_config file if it is specified
+        Otherwise set them to their default value
+        '''
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         prefix = self.actor_node_name.replace("-btu", "")
         self.flow_channel_name = app_config.get("FlowChannelName", f"{prefix}-flow")
         self.hot_channel_name = app_config.get("HotChannelName", f"{prefix}-hot-temp")
         self.cold_channel_name = app_config.get("ColdChannelName", f"{prefix}-cold-temp")
         self.ct_channel_name = app_config.get("CtChannelName", None)
-
         self.send_hz = app_config.get("SendHz", False)
         self.read_ct_voltage = self.ct_channel_name is not None
         self.thermistor_beta = app_config.get("ThermistorBeta", DEFAULT_THERMISTOR_BETA)
@@ -766,11 +921,16 @@ class AsyncBtuMeter:
         self.gallons_per_pulse = app_config.get("GallonsPerPulse", DEFAULT_GALLONS_PER_PULSE)
         self.async_capture_delta_gpm_x_100 = app_config.get("AsyncCaptureDeltaGpmX100", DEFAULT_ASYNC_CAPTURE_DELTA_GPM_X_100)
         self.async_capture_delta_celsius_x_100 = app_config.get("AsyncCaptureDeltaCelsiusX100", DEFAULT_ASYNC_CAPTURE_DELTA_CELSIUS_X_100)
-        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100",DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
+        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100", DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
 
-    def save_app_config(self):
+    def save_app_config(self, config_dict):
+        try:
+            _atomic_write(APP_CONFIG_FILE, ujson.dumps(config_dict).encode())
+        except Exception as e:
+            print(f"Error saving app config: {e}")
 
-        config = {
+    def current_async_btu_params(self):
+        return {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowChannelName": self.flow_channel_name,
@@ -785,65 +945,94 @@ class AsyncBtuMeter:
             "AsyncCaptureDeltaGpmX100": self.async_capture_delta_gpm_x_100,
             "AsyncCaptureDeltaCelsiusX100": self.async_capture_delta_celsius_x_100,
             "AsyncCaptureDeltaCtVoltsX100": self.async_capture_delta_ct_volts_x_100,
+            "PicoBoardVariant": self.pico_board_variant,
+            "MicropythonVersion": os.uname().release,
             "TypeName": "async.btu.params",
-            "Version": "000"
+            "Version": "100"
         }
-        with open(APP_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-    
+
     def update_app_config(self):
-        endpoint = f"/{self.actor_node_name}/async-btu-params"
+        current = self.current_async_btu_params()
+        status, updated_config = self.http.post(
+            f"/{self.actor_node_name}/async-btu-params",
+            current,
+            mode=1
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not updated_config:
+            return
+
+        PARAM_KEYS = (
+            "ActorNodeName",
+            "FlowChannelName",
+            "SendHz",
+            "HotChannelName",
+            "ColdChannelName",
+            "CtChannelName",
+            "ThermistorBeta",
+            "CapturePeriodS",
+            "GallonsPerPulse",
+            "AsyncCaptureDeltaGpmX100",
+            "AsyncCaptureDeltaCelsiusX100",
+            "AsyncCaptureDeltaCtVoltsX100",
+        )
+
+        changed = any(
+            k in updated_config and updated_config[k] != current[k]
+            for k in PARAM_KEYS
+        )
+
+        if not changed:
+            return
+
+        new_config = {
+            k: updated_config.get(k, current[k])
+            for k in PARAM_KEYS
+        }
+
+        self.save_app_config(new_config)
+        self.load_app_config(new_config)
+        self.http.actor_node_name = self.actor_node_name
+
+        offset = updated_config.get("CaptureOffsetS")
+        if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
+            self.capture_offset_seconds = offset
+
+    # ---------------------------------
+    # Code updates
+    # ---------------------------------
+
+    def update_code(self):
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
-            "FlowChannelName": self.flow_channel_name,
-            "SendHz": self.send_hz,
-            "ReadCtVoltage": self.read_ct_voltage,
-            "HotChannelName": self.hot_channel_name,
-            "ColdChannelName": self.cold_channel_name,
-            "CtChannelName": self.ct_channel_name,
-            "ThermistorBeta": self.thermistor_beta,
-            "CapturePeriodS": self.capture_period_s,
-            "GallonsPerPulse": self.gallons_per_pulse,
-            "AsyncCaptureDeltaGpmX100": self.async_capture_delta_gpm_x_100,
-            "AsyncCaptureDeltaCelsiusX100": self.async_capture_delta_celsius_x_100,
-            "AsyncCaptureDeltaCtVoltsX100": self.async_capture_delta_ct_volts_x_100,
-            "TypeName": "async.btu.params",
-            "Version": "000"
+            "TypeName": "new.code",
+            "Version": "100"
         }
-        response = self.post_with_fallback(endpoint, payload)
-        if response:
-            try:
-                updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.hot_channel_name = updated_config.get("HotChannelName", self.hot_channel_name)
-                self.cold_channel_name = updated_config.get("ColdChannelName", self.cold_channel_name)
-                self.flow_channel_name = updated_config.get("FlowChannelName", self.flow_channel_name)
-                self.send_hz = updated_config.get("SendHz", self.send_hz)
-                self.read_ct_voltage = updated_config.get("ReadCtVoltage", self.read_ct_voltage)
-                # None will signal not reading power
-                self.ct_channel_name = updated_config.get("CtChannelName")
-                
-                self.read_ct_voltage = self.ct_channel_name is not None
-                self.thermistor_beta = updated_config.get("ThermistorBeta", self.thermistor_beta)
-                if self.thermistor_beta is None:
-                    self.thermistor_beta = DEFAULT_THERMISTOR_BETA
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                if self.capture_offset_seconds is None:
-                    self.capture_offset_seconds = 0
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
+        status, content = self.http.post(
+            f"/{self.actor_node_name}/code-update",
+            payload,
+            mode=2  # raw bytes
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200 or not content:
+            return
 
-                self.gallons_per_pulse = updated_config.get("GallonsPerPulse", self.gallons_per_pulse)
-                self.async_capture_delta_gpm_x_100 = updated_config.get("AsyncCaptureDeltaGpmX100", self.async_capture_delta_gpm_x_100)
+        # JSON response → no update pending
+        if content.startswith(b"{"):
+            return
 
-                self.async_capture_delta_celsius_x_100 = updated_config.get("AsyncCaptureDeltaCelsiusX100", self.async_capture_delta_celsius_x_100)
+        try:
+            _atomic_write("main_update.py", content)
+            machine.reset()
+        except Exception as e:
+            print("Code update failed:", e)
 
-                self.async_capture_delta_ct_volts_x_100 = updated_config.get("AsyncCaptureDeltaCtVoltsX100", self.async_capture_delta_ct_volts_x_100)
-                self.save_app_config()
-            except:
-                pass
-            finally:
-                response.close()
+    # ---------------------------------
+    # Measurements
+    # ---------------------------------
 
     def celsius_from_volts(self, volts):
         #  Uses Beta formula with THERMISTOR_BETA of 3977
@@ -851,11 +1040,11 @@ class AsyncBtuMeter:
         if volts <= 0.001 or volts >= 3.299:
             return None
         # Use Beta Formula
-        r_therm = 1 / ((ADC_REF_V / volts - 1) / self.R_FIXED_KOHMS)
+        r_therm = 1 / ((ADC_REF_V / volts - 1) / R_FIXED_KOHMS)
         thermistor_beta = self.thermistor_beta
         if thermistor_beta is None or thermistor_beta == 0:
             thermistor_beta = DEFAULT_THERMISTOR_BETA
-        return 1 / ((1 / self.THERMISTOR_T0) + (math.log(r_therm / self.THERMISTOR_R0_KOHMS) / thermistor_beta)) - 273
+        return 1 / ((1 / THERMISTOR_T0) + (math.log(r_therm / THERMISTOR_R0_KOHMS) / thermistor_beta)) - 273
 
     def measure_temp(self, adc_channel, n_samples=100):
         # Measure voltage in microvolts (for temp) Takes ~1.7ms for 100 samples.
@@ -1045,7 +1234,6 @@ class AsyncBtuMeter:
         minutes = elapsed_s / 60.0
         self.gpm = gallons / minutes if minutes > 0 else 0.0
 
-
     def measure_temps_and_ct(self, timer):
         # Timer callback: Runs at t=850ms, 1850ms, 2850ms...
         # Intentionally offset from flow measurement window (0-800ms)
@@ -1070,7 +1258,6 @@ class AsyncBtuMeter:
         self.disruption_recovery = 0
 
     def manage_flow(self, timer):
-
         if self.toss_measurement:
             print("Tossing corrupted measurement")
             self.toss_measurement = False
@@ -1100,6 +1287,10 @@ class AsyncBtuMeter:
         # ready for new measurement
         self.reset_flow_measurement()
 
+    # ---------------------------------
+    # Posting data
+    # ---------------------------------
+
     def report(self):
         now_s = utime.time()
         time_since_sync = now_s  - self.last_sync_report_s
@@ -1111,36 +1302,47 @@ class AsyncBtuMeter:
             flow_val = self.hz
             flow_unit = "HzTimes100"
         if send_sync:
-            if flow_val is not None and self.hot is not None and self.cold is not None:
+            about_nodes = []
+            measurements = []
+            units = []
 
-                about_nodes = [self.flow_channel_name, self.hot_channel_name, self.cold_channel_name]
-                measurements = [
-                    round(flow_val * 100),
-                    round(self.hot * 100),
-                    round(self.cold * 100),
-                ]
-                units = [flow_unit, "CelsiusTimes100", "CelsiusTimes100"]
-                
-                if self.read_ct_voltage and self.pump_ct_voltage is not None:
-                    about_nodes.append(self.ct_channel_name)
-                    measurements.append(round(self.pump_ct_voltage * 100))
-                    units.append("VoltsTimes100")
-                
+            if flow_val is not None:
+                about_nodes.append(self.flow_channel_name)
+                measurements.append(round(flow_val * 100))
+                units.append(flow_unit)
+
+            if self.hot is not None:
+                about_nodes.append(self.hot_channel_name)
+                measurements.append(round(self.hot * 100))
+                units.append("CelsiusTimes100")
+
+            if self.cold is not None:
+                about_nodes.append(self.cold_channel_name)
+                measurements.append(round(self.cold * 100))
+                units.append("CelsiusTimes100")
+
+            if self.read_ct_voltage and self.pump_ct_voltage is not None:
+                about_nodes.append(self.ct_channel_name)
+                measurements.append(round(self.pump_ct_voltage * 100))
+                units.append("VoltsTimes100")
+
+            if about_nodes:
+                print(f"SYNC SEND → {about_nodes} {measurements}")
                 self.post_btu_data(about_nodes, measurements, units)
                 self.last_sync_report_s = now_s
-                print(f"JUST RESET last_sync_report_s")
         else:
             about_nodes = []
             measurements = []
             units = []
-            if flow_val is None or self.hot is None or self.cold is None:
+            if flow_val is None and self.hot is None and self.cold is None:
                 print(f"Skipping async - missing data: flow: {flow_val}{flow_unit}, hot={self.hot}, cold={self.cold}")
                 return
-            if 100 * abs(self.gpm - self.last_sent_gpm) > self.async_capture_delta_gpm_x_100:
-                about_nodes.append(self.flow_channel_name)
-                measurements.append(round(flow_val * 100))
-                units.append(flow_unit)
-                print(f"Flow changed: {self.last_sent_gpm:.3f} -> {self.gpm:.3f} GPM")
+            if flow_val is not None and self.gpm is not None:
+                if 100 * abs(self.gpm - self.last_sent_gpm) > self.async_capture_delta_gpm_x_100:
+                    about_nodes.append(self.flow_channel_name)
+                    measurements.append(round(flow_val * 100))
+                    units.append(flow_unit)
+                    print(f"Flow changed: {self.last_sent_gpm:.3f} -> {self.gpm:.3f} GPM")
             
             if self.hot is not None:
                 if 100 * abs(self.hot - self.last_sent_hot) > self.async_capture_delta_celsius_x_100:
@@ -1165,27 +1367,7 @@ class AsyncBtuMeter:
             if about_nodes:
                 self.post_btu_data(about_nodes, measurements, units)
 
-    def sync_report(self, timer):
-        if self.gpm is None or self.hot is None or self.cold is None:
-            return
-        about_nodes = [self.flow_channel_name, self.hot_channel_name, self.cold_channel_name]
-        measurements = [
-            round(self.gpm * 100),  # GpmTimes100
-            round(self.hot * 100),  # CelsiusTimes100
-            round(self.cold * 100), # CelsiusTImes100
-        ]
-        units = ["GpmTimes100", "CelsiusTimes100", "CelsiusTimes100"]
-
-        # add ct voltage if configured
-        if self.read_ct_voltage and self.pump_ct_voltage is not None:
-            about_nodes.append(self.ct_channel_name)
-            measurements.append(round(self.pump_ct_voltage * 100))
-            units.append("VoltsTimes100")
-
-        self.post_btu_data(about_nodes, measurements, units)
-
     def post_btu_data(self, about_nodes, measurements, units):
-        endpoint = f"/{self.actor_node_name}/multichannel-snapshot"
         payload = {
                 "HwUid": self.hw_uid,
                 "ChannelNameList": about_nodes,
@@ -1194,21 +1376,24 @@ class AsyncBtuMeter:
                 "TypeName": "multichannel.snapshot",
                 "Version": "000"
             }
-        response = self.post_with_fallback(endpoint, payload)
+        status = self.http.post_fire_and_forget(
+            f"/{self.actor_node_name}/multichannel-snapshot",
+            payload
+        )
+        if status is None:
+            self.needs_reconnect = True
+        if status != 200:
+            return False
 
-        if response:
-            response.close()
-            if self.flow_channel_name in about_nodes:
-                self.last_sent_gpm = self.gpm
-            if self.hot_channel_name in about_nodes:
-                self.last_sent_hot = self.hot
-            if self.cold_channel_name in about_nodes:
-                self.last_sent_cold = self.cold
-            if self.read_ct_voltage and self.ct_channel_name in about_nodes:
-                self.last_sent_pump_ct_voltage = self.pump_ct_voltage
-            return True
-
-        return False
+        if self.flow_channel_name in about_nodes:
+            self.last_sent_gpm = self.gpm
+        if self.hot_channel_name in about_nodes:
+            self.last_sent_hot = self.hot
+        if self.cold_channel_name in about_nodes:
+            self.last_sent_cold = self.cold
+        if self.read_ct_voltage and self.ct_channel_name in about_nodes:
+            self.last_sent_pump_ct_voltage = self.pump_ct_voltage
+        return True
 
     def start_timers(self):
         self.pulse_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=self.pulse_callback)
@@ -1228,7 +1413,6 @@ class AsyncBtuMeter:
         )
         
     def main_loop(self):
-
         try:
             offset = round(self.capture_offset_seconds)
             if offset > 1:
@@ -1237,23 +1421,30 @@ class AsyncBtuMeter:
         except Exception as e:
             self.last_sync_report_s = utime.time()
         while True:
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
             if self.pending_async_check:
                 # Give pulse callback the chance to cleanly catch its first
                 # timestamp. Slowest ~ 15 Hz / 67 ms
                 utime.sleep_ms(100)
-                print(f"{self.gpm:.2f} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
+                gpm_str = "None" if self.gpm is None else f"{self.gpm:.2f}"
+                print(f"{gpm_str} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
                 self.report()
                 self.pending_async_check = False
-
             utime.sleep_ms(1) 
 
     def start(self):
-        if self.wifi_or_ethernet=='wifi':
-            self.connect_to_wifi()
-        elif self.wifi_or_ethernet=='ethernet':
-            self.connect_to_ethernet()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Initial connect failed ({e})")
+            self.needs_reconnect = True
+            self.time_last_tried_to_reconnect = 0
 
-        # Update configurations 
         self.update_comms_config()
         self.update_app_config()
         self.update_code()
@@ -1266,7 +1457,6 @@ class AsyncBtuMeter:
 if __name__ == "__main__":
     b = AsyncBtuMeter()
     b.start()
-
     """
     with open('main.py', 'w') as file:
         file.write(main_code)
@@ -1279,6 +1469,18 @@ if __name__ == "__main__":
 # -------------------------
 # Tank module
 # -------------------------
+
+def determine_pico_board_variant(wifi_or_ethernet):
+    machine_str = os.uname().machine
+    print(f"os.uname().machine = {machine_str!r}")
+    if "RP2350" in machine_str:
+        return "PicoWiznetEth2350"
+    elif machine_str=="Raspberry Pi Pico W with RP2040":
+        return "PicoRaspberryWifi2040"
+    elif machine_str=="W5500-EVB-Pico with RP2040":
+        return "PicoWiznetEth2040"
+    return "Unknown"
+
 
 def provision_tank_module():
     """Configure tank module app_config.json"""
@@ -1362,7 +1564,7 @@ elif 'main_revert.py' in os.listdir():
         file.write(bootpy_code)
     print(f"Wrote 'boot.py' on the Pico.")
     
-    print(f"\n{'-'*40}\n[1/4] Success! Found hardware ID and wrote 'boot.py'.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[1/3] Success! Found hardware ID and wrote 'boot.py'.\n{'-'*40}\n")
 
     # -------------------------
     # Write comms_config.json
@@ -1370,25 +1572,28 @@ elif 'main_revert.py' in os.listdir():
 
     have_wifi_or_ethernet = False
     while not have_wifi_or_ethernet:
-        wifi_or_ethernet = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
-        if wifi_or_ethernet not in {'w','e'}:
+        transport_choice = input("Does this Pico use WiFi (enter 'w') or Ethernet (enter 'e'): ")
+        if transport_choice not in {'w', 'e'}:
             print("Invalid entry. Please enter either 'w' or 'e'.")
         else:
             have_wifi_or_ethernet = True
-    
-    # Connect to wifi
-    if wifi_or_ethernet == 'w':
+
+    if transport_choice == 'w':
+        wifi_or_ethernet = 'wifi'
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
         wlan.disconnect()
         while wlan.isconnected():
             utime.sleep(0.1)
-        
+
         while not wlan.isconnected():
             wifi_name = input("Enter wifi name (leave blank for 'GridWorks'): ")
             if wifi_name == "":
                 wifi_name = "GridWorks"
             wifi_pass = input("Enter wifi password: ")
+            wlan.disconnect()
+            while wlan.isconnected():
+                utime.sleep(0.1)
             time_waiting_connection = 0
             wlan.connect(wifi_name, wifi_pass)
             while not wlan.isconnected():
@@ -1401,8 +1606,8 @@ elif 'main_revert.py' in os.listdir():
                     break
         print(f"Connected to wifi '{wifi_name}'.\n")
 
-    # Connect to ethernet
-    elif wifi_or_ethernet == 'e':
+    elif transport_choice == 'e':
+        wifi_or_ethernet = 'ethernet'
         nic = network.WIZNET5K()
         for attempt in range(3):
             try:
@@ -1421,6 +1626,9 @@ elif 'main_revert.py' in os.listdir():
                     raise RuntimeError("Failed to connect to Ethernet (timeout)")
                 utime.sleep(0.5)
         print("Connected to Ethernet")
+
+    pico_board_variant = determine_pico_board_variant(wifi_or_ethernet)
+    print(f"PicoBoardVariant = {pico_board_variant}")
 
     # Connect to API
 
@@ -1456,24 +1664,26 @@ elif 'main_revert.py' in os.listdir():
     backup_url = f"http://{hostname}.local:8000"
 
     # Write the parameters to comms_config.json
-    if wifi_or_ethernet=='w':
+    if wifi_or_ethernet == 'wifi':
         comms_config_content = {
             "WifiOrEthernet": 'wifi',
             "WifiName": wifi_name,
-            "WifiPassword": wifi_pass, 
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "WifiPassword": wifi_pass,
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
-    elif wifi_or_ethernet=='e':
+    elif wifi_or_ethernet == 'ethernet':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
-            "BaseUrl": f"http://{PRIMARY_SCADA_IP}:8000",
+            "PicoBoardVariant": pico_board_variant,
+            "BaseUrl": base_url,
             "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)
 
-    print(f"\n{'-'*40}\n[2/4] Success! Wrote 'comms_config.json' on the Pico.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[2/3] Success! Wrote 'comms_config.json' on the Pico.\n{'-'*40}\n")
 
     # -------------------------
     # Write app_config.json and main code
@@ -1487,13 +1697,14 @@ elif 'main_revert.py' in os.listdir():
     if device_type == '0':
         actor_name = provision_tank_module()
         print("This is a tank module")
+        write_net_py()
         write_tank_module_3_main()
     elif device_type == '1':
         actor_name = provision_btu_meter()
         print("This is a BTU meter.")
+        write_net_py()
         write_btu_meter_main()
-        
 
-    print(f"\n{'-'*40}\n[4/4] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
+    print(f"\n{'-'*40}\n[3/3] Success! Wrote 'main.py' on the Pico.\n{'-'*40}\n")
 
     print("The Pico is set up. It is now ready to use.")
