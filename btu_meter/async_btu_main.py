@@ -1,82 +1,112 @@
+import os
 import machine
 from machine import Pin
 import utime
-import math
-import network
 import ujson
-import urequests
 import ubinascii
+import urequests
+import math
 
+import net
 
+# ---------------------------------
+# Constants and helper functions
+# ---------------------------------
+
+# Configuration files
 COMMS_CONFIG_FILE = "comms_config.json"
 APP_CONFIG_FILE = "app_config.json"
+
+# Default parameters
 DEFAULT_ACTOR_NAME = "primary-btu"
-
-ADC_REF_V = 3.3
-
-BASE_URL_RETRY_SECONDS = 300  # 5 minutes
 DEFAULT_CAPTURE_PERIOD_S = 60
 DEFAULT_GALLONS_PER_PULSE = 0.0009
 DEFAULT_ASYNC_CAPTURE_DELTA_GPM_X_100 = 10
 DEFAULT_ASYNC_CAPTURE_DELTA_CELSIUS_X_100 = 20
 DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100 = 20
 DEFAULT_THERMISTOR_BETA = 3977
+
+# Pin numbers
+PULSE_PIN = 22
+ADC0_PIN = 26 # Hot Temp
+ADC1_PIN = 27 # Cold Temp
+ADC2_PIN = 28 # Current Transformer
+
+# Other constants
 SAMPLES = 1000
 NUM_SAMPLE_AVERAGES = 1
+BASE_URL_RETRY_SECONDS = 300
+RECONNECT_COOLDOWN_S = 30
+ADC_REF_V = 3.3
+R_FIXED_KOHMS = 5.6
+THERMISTOR_R0_KOHMS = 10
+THERMISTOR_T0 = 298
+
+PICO_BOARD_VARIANTS = (
+    "PicoWiznetEth2040",
+    "PicoWiznetEth2350",
+    "PicoRaspberryWifi2040",
+    "Unknown",
+)
+
+
+def _atomic_write(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+    os.sync()
+    os.rename(tmp, path)
+    os.sync()
+
+
+# ---------------------------------
+# Main class
+# ---------------------------------
 
 class AsyncBtuMeter:
-    # BTU meter with coordinated measure of flow, temp and pump power.
-    # Designed for async reporting on change for all 3 and also
-    # synchronous reporting happening at a default of 60 seconds
-
-    # Flow meter expected range: 15-150 Hz (67ms - 6.7ms periods)
-    # Jitter threshold: > 400 Hz (< 2.5ms period) indicates physical bounce
-    #
-    # self.read_ct is True iff CtNodeName is not None
-
-    PULSE_PIN = 22
-    ADC0_PIN = 26 # Hot Temp
-    ADC1_PIN = 27 # Cold Temp
-    ADC2_PIN = 28 # Current Transformer
-
-    FLOW_TIMEOUT_MS = 100
-
-    R_FIXED_KOHMS = 5.6
-    THERMISTOR_R0_KOHMS = 10
-    THERMISTOR_T0 = 298
-
+    '''
+    BTU meter with coordinated measure of flow, temp and pump power.
+    Designed for async reporting on change for all 3 and also
+    synchronous reporting happening at a default of 60 seconds
+    Flow meter expected range: 15-150 Hz (67ms - 6.7ms periods)
+    Jitter threshold: > 400 Hz (< 2.5ms period) indicates physical bounce
+    self.read_ct is True iff CtNodeName is not None
+    '''
     def __init__(self):
+        # Unique ID
         pico_unique_id = ubinascii.hexlify(machine.unique_id()).decode()[-6:]
         self.hw_uid = f"pico_{pico_unique_id}"
+
+        # Pins
+        Pin(ADC0_PIN, Pin.IN)
+        Pin(ADC1_PIN, Pin.IN)
+        Pin(ADC2_PIN, Pin.IN)
+        self.pulse_pin = machine.Pin(PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.adc_hot = machine.ADC(ADC0_PIN)
+        self.adc_cold = machine.ADC(ADC1_PIN)
+        self.adc_ct = machine.ADC(ADC2_PIN)
+
+        # Load configurations
         self.load_comms_config()
         self.use_ip_failed = False
-        self.last_base_url_retry = utime.time()
-        self.load_app_config()
-
-        # Hardware setup
-        # Release any ADC pull-down/pull-up resistors
-        Pin(26, Pin.IN)
-        Pin(27, Pin.IN)
-        Pin(28, Pin.IN)
-        self.pulse_pin = machine.Pin(self.PULSE_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-        self.adc_hot = machine.ADC(self.ADC0_PIN)
-
-        self.adc_cold = machine.ADC(self.ADC1_PIN)
-        self.adc_ct = machine.ADC(self.ADC2_PIN)
+        self.last_ip_retry = utime.time()
+        try:
+            with open(APP_CONFIG_FILE, "r") as f:
+                app_config = ujson.load(f)
+        except:
+            app_config = {}
+        self.load_app_config(app_config)
 
         # Flow measurement state
         self._tick_count = 0 # Only modified by pulse_callback (ISR)
-        
         self.ready_for_new_measurement = True
-        self.last_tick_ms = utime.ticks_ms()
         self.measurement_start_ms = None  # this signals no flow
         self.completed_elapsed_ms = None
         self.completed_tick_count = 0
-
         self.flow_data_ready = False # set True by pulse_callback, False by flow_timer 
 
         # Measurements
-
         self.gpm = None
         self.hz = None
         self.hot = None
@@ -89,7 +119,7 @@ class AsyncBtuMeter:
         self.last_sent_cold = -999
         self.last_sent_pump_ct_voltage = -999
 
-        #Timers
+        # Timers
         self.last_sync_report_s = 0
         self.capture_offset_seconds = 0 
         self.temp_timer = machine.Timer(-1)
@@ -109,36 +139,14 @@ class AsyncBtuMeter:
         self.avg_double = 20000
         self.last_pulse_us = None
         self.toss_measurement = False
-                                                                 
-    def connect_to_wifi(self):
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        if not wlan.isconnected():
-            print("Connecting to wifi...")
-            wlan.connect(self.wifi_name, self.wifi_password)
-            while not wlan.isconnected():
-                utime.sleep_ms(500)
-        print(f"Connected to wifi {self.wifi_name}")
 
-    def connect_to_ethernet(self):
-        nic = network.WIZNET5K()
-        for attempt in range(3):
-            try:
-                nic.active(True)
-                break
-            except Exception as e:
-                print(f"Retrying NIC activation due to: {e}")
-                utime.sleep(0.5)
-        if not nic.isconnected():
-            print("Connecting to Ethernet...")
-            nic.ifconfig('dhcp')
-            timeout = 10
-            start = utime.time()
-            while not nic.isconnected():
-                if utime.time() - start > timeout:
-                    raise RuntimeError("Failed to connect to Ethernet (timeout)")
-                utime.sleep(0.5)
-        print("Connected to Ethernet")
+        # Reconnect
+        self.needs_reconnect = False
+        self.time_last_tried_to_reconnect = utime.time()
+
+    # ---------------------------------
+    # Communication
+    # ---------------------------------
 
     def post_with_fallback(self, endpoint, payload):
         # POST to SCADA with IP/DNS fallback.
@@ -256,7 +264,6 @@ class AsyncBtuMeter:
             "TypeName": "baseurl.failure.alert",
             "Version": "100"
         }
-
         if self.dns_url:
             try:
                 url = self.dns_url + f"/{self.actor_node_name}/baseurl-failure-alert"
@@ -266,31 +273,27 @@ class AsyncBtuMeter:
             except:
                 pass
 
-    def update_code(self):
-        endpoint = f"/{self.actor_node_name}/code-update"
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "TypeName": "new.code",
-            "Version": "100"
-        }
-        response = self.post_with_fallback(endpoint, payload)
-        if response:
-            try:
-                ujson.loads(response.content.decode('utf-8'))
-            except:
-                python_code = response.content
-                with open('main_update.py', 'wb') as file:
-                    file.write(python_code)
-                machine.reset()
+    def try_to_reconnect(self):
+        self.time_last_tried_to_reconnect = utime.time()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                if not net.is_wifi_connected():
+                    net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                if not net.is_ethernet_connected():
+                    net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Error when trying to reconnect ({e})")
 
     def load_comms_config(self):
+        '''Load the communication configuration file (WiFi/Ethernet and API URL)'''
         try:
             with open(COMMS_CONFIG_FILE, "r") as f:
                 comms_config = ujson.load(f)
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Error loading comms_config file: {e}")
         self.wifi_or_ethernet = comms_config.get("WifiOrEthernet", 'wifi')
+        self.pico_board_variant = self.determine_pico_board_variant(comms_config.get("PicoBoardVariant"))
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.ip_url = comms_config.get("BaseUrl", None)
@@ -307,7 +310,23 @@ class AsyncBtuMeter:
             raise KeyError("WifiOrEthernet must exost amd be either 'wifi' or 'ethernet' in comms_config.json")
         if self.ip_url is None:
             raise KeyError("BaseUrl not found in comms_config.json")
-        
+
+    def determine_pico_board_variant(self, configured):
+        '''The physical board, as a pico.board.variant enum value.
+        comms_config.json wins when the provisioner wrote one; otherwise
+        derive it from os.uname().machine, with WifiOrEthernet as the
+        tiebreak between the two RP2040 boards. Unknown when neither
+        settles it.'''
+        if configured in PICO_BOARD_VARIANTS:
+            return configured
+        machine_str = os.uname().machine
+        if "RP2350" in machine_str:
+            return "PicoWiznetEth2350"
+        elif machine_str=="Raspberry Pi Pico W with RP2040":
+            return "PicoRaspberryWifi2040"
+        elif machine_str=="W5500-EVB-Pico with RP2040":
+            return "PicoWiznetEth2040"
+        return "Unknown"
 
     def _test_url(self, url):
         #Test if a URL is reachable#
@@ -368,23 +387,26 @@ class AsyncBtuMeter:
             config["WifiName"] = self.wifi_name
             config["WifiPassword"] = self.wifi_password
 
-        with open(COMMS_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-
-    def load_app_config(self):
-        #Load the app config file. If PumpPowerName is None, do not read power
         try:
-            with open(APP_CONFIG_FILE, "r") as f:
-                app_config = ujson.load(f)
-        except:
-            app_config = {}
+            _atomic_write(COMMS_CONFIG_FILE, ujson.dumps(config).encode())
+        except Exception as e:
+            print(f"Error saving comms config: {e}")
+
+    # ---------------------------------
+    # Parameters
+    # ---------------------------------
+
+    def load_app_config(self, app_config):
+        '''
+        Set parameters to their value in the app_config file if it is specified
+        Otherwise set them to their default value
+        '''
         self.actor_node_name = app_config.get("ActorNodeName", DEFAULT_ACTOR_NAME)
         prefix = self.actor_node_name.replace("-btu", "")
         self.flow_channel_name = app_config.get("FlowChannelName", f"{prefix}-flow")
         self.hot_channel_name = app_config.get("HotChannelName", f"{prefix}-hot-temp")
         self.cold_channel_name = app_config.get("ColdChannelName", f"{prefix}-cold-temp")
         self.ct_channel_name = app_config.get("CtChannelName", None)
-
         self.send_hz = app_config.get("SendHz", False)
         self.read_ct_voltage = self.ct_channel_name is not None
         self.thermistor_beta = app_config.get("ThermistorBeta", DEFAULT_THERMISTOR_BETA)
@@ -392,11 +414,16 @@ class AsyncBtuMeter:
         self.gallons_per_pulse = app_config.get("GallonsPerPulse", DEFAULT_GALLONS_PER_PULSE)
         self.async_capture_delta_gpm_x_100 = app_config.get("AsyncCaptureDeltaGpmX100", DEFAULT_ASYNC_CAPTURE_DELTA_GPM_X_100)
         self.async_capture_delta_celsius_x_100 = app_config.get("AsyncCaptureDeltaCelsiusX100", DEFAULT_ASYNC_CAPTURE_DELTA_CELSIUS_X_100)
-        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100",DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
+        self.async_capture_delta_ct_volts_x_100 = app_config.get("AsyncCaptureDeltaCtVoltsX100", DEFAULT_ASYNC_CAPTURE_DELTA_CT_VOLTS_X_100)
 
-    def save_app_config(self):
+    def save_app_config(self, config_dict):
+        try:
+            _atomic_write(APP_CONFIG_FILE, ujson.dumps(config_dict).encode())
+        except Exception as e:
+            print(f"Error saving app config: {e}")
 
-        config = {
+    def current_async_btu_params(self):
+        return {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
             "FlowChannelName": self.flow_channel_name,
@@ -411,65 +438,105 @@ class AsyncBtuMeter:
             "AsyncCaptureDeltaGpmX100": self.async_capture_delta_gpm_x_100,
             "AsyncCaptureDeltaCelsiusX100": self.async_capture_delta_celsius_x_100,
             "AsyncCaptureDeltaCtVoltsX100": self.async_capture_delta_ct_volts_x_100,
+            "PicoBoardVariant": self.pico_board_variant,
+            "MicropythonVersion": os.uname().release,
             "TypeName": "async.btu.params",
-            "Version": "000"
+            "Version": "100"
         }
-        with open(APP_CONFIG_FILE, "w") as f:
-            ujson.dump(config, f)
-    
+
     def update_app_config(self):
-        endpoint = f"/{self.actor_node_name}/async-btu-params"
+        current = self.current_async_btu_params()
+        response = self.post_with_fallback(
+            f"/{self.actor_node_name}/async-btu-params",
+            current,
+        )
+        if not response:
+            return
+
+        try:
+            updated_config = response.json()
+        except:
+            return
+        finally:
+            response.close()
+
+        PARAM_KEYS = (
+            "ActorNodeName",
+            "FlowChannelName",
+            "SendHz",
+            "HotChannelName",
+            "ColdChannelName",
+            "CtChannelName",
+            "ThermistorBeta",
+            "CapturePeriodS",
+            "GallonsPerPulse",
+            "AsyncCaptureDeltaGpmX100",
+            "AsyncCaptureDeltaCelsiusX100",
+            "AsyncCaptureDeltaCtVoltsX100",
+        )
+
+        changed = any(
+            k in updated_config and updated_config[k] != current[k]
+            for k in PARAM_KEYS
+        )
+
+        if not changed:
+            return
+
+        new_config = {
+            k: updated_config.get(k, current[k])
+            for k in PARAM_KEYS
+        }
+
+        self.save_app_config(new_config)
+        self.load_app_config(new_config)
+
+        offset = updated_config.get("CaptureOffsetS")
+        if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
+            self.capture_offset_seconds = offset
+
+    # ---------------------------------
+    # Code updates
+    # ---------------------------------
+
+    def update_code(self):
         payload = {
             "HwUid": self.hw_uid,
             "ActorNodeName": self.actor_node_name,
-            "FlowChannelName": self.flow_channel_name,
-            "SendHz": self.send_hz,
-            "ReadCtVoltage": self.read_ct_voltage,
-            "HotChannelName": self.hot_channel_name,
-            "ColdChannelName": self.cold_channel_name,
-            "CtChannelName": self.ct_channel_name,
-            "ThermistorBeta": self.thermistor_beta,
-            "CapturePeriodS": self.capture_period_s,
-            "GallonsPerPulse": self.gallons_per_pulse,
-            "AsyncCaptureDeltaGpmX100": self.async_capture_delta_gpm_x_100,
-            "AsyncCaptureDeltaCelsiusX100": self.async_capture_delta_celsius_x_100,
-            "AsyncCaptureDeltaCtVoltsX100": self.async_capture_delta_ct_volts_x_100,
-            "TypeName": "async.btu.params",
-            "Version": "000"
+            "TypeName": "new.code",
+            "Version": "100"
         }
-        response = self.post_with_fallback(endpoint, payload)
-        if response:
-            try:
-                updated_config = response.json()
-                self.actor_node_name = updated_config.get("ActorNodeName", self.actor_node_name)
-                self.hot_channel_name = updated_config.get("HotChannelName", self.hot_channel_name)
-                self.cold_channel_name = updated_config.get("ColdChannelName", self.cold_channel_name)
-                self.flow_channel_name = updated_config.get("FlowChannelName", self.flow_channel_name)
-                self.send_hz = updated_config.get("SendHz", self.send_hz)
-                self.read_ct_voltage = updated_config.get("ReadCtVoltage", self.read_ct_voltage)
-                # None will signal not reading power
-                self.ct_channel_name = updated_config.get("CtChannelName")
-                
-                self.read_ct_voltage = self.ct_channel_name is not None
-                self.thermistor_beta = updated_config.get("ThermistorBeta", self.thermistor_beta)
-                if self.thermistor_beta is None:
-                    self.thermistor_beta = DEFAULT_THERMISTOR_BETA
-                self.capture_offset_seconds = updated_config.get("CaptureOffsetS", 0)
-                if self.capture_offset_seconds is None:
-                    self.capture_offset_seconds = 0
-                self.capture_period_s = updated_config.get("CapturePeriodS", self.capture_period_s)
+        response = self.post_with_fallback(
+            f"/{self.actor_node_name}/code-update",
+            payload,
+        )
+        if not response:
+            return
 
-                self.gallons_per_pulse = updated_config.get("GallonsPerPulse", self.gallons_per_pulse)
-                self.async_capture_delta_gpm_x_100 = updated_config.get("AsyncCaptureDeltaGpmX100", self.async_capture_delta_gpm_x_100)
+        content = None
+        try:
+            if response.status_code != 200:
+                return
+            content = response.content
+        finally:
+            response.close()
 
-                self.async_capture_delta_celsius_x_100 = updated_config.get("AsyncCaptureDeltaCelsiusX100", self.async_capture_delta_celsius_x_100)
+        if not content:
+            return
 
-                self.async_capture_delta_ct_volts_x_100 = updated_config.get("AsyncCaptureDeltaCtVoltsX100", self.async_capture_delta_ct_volts_x_100)
-                self.save_app_config()
-            except:
-                pass
-            finally:
-                response.close()
+        # JSON response → no update pending
+        if content.startswith(b"{"):
+            return
+
+        try:
+            _atomic_write("main_update.py", content)
+            machine.reset()
+        except Exception as e:
+            print("Code update failed:", e)
+
+    # ---------------------------------
+    # Measurements
+    # ---------------------------------
 
     def celsius_from_volts(self, volts):
         #  Uses Beta formula with THERMISTOR_BETA of 3977
@@ -477,11 +544,11 @@ class AsyncBtuMeter:
         if volts <= 0.001 or volts >= 3.299:
             return None
         # Use Beta Formula
-        r_therm = 1 / ((ADC_REF_V / volts - 1) / self.R_FIXED_KOHMS)
+        r_therm = 1 / ((ADC_REF_V / volts - 1) / R_FIXED_KOHMS)
         thermistor_beta = self.thermistor_beta
         if thermistor_beta is None or thermistor_beta == 0:
             thermistor_beta = DEFAULT_THERMISTOR_BETA
-        return 1 / ((1 / self.THERMISTOR_T0) + (math.log(r_therm / self.THERMISTOR_R0_KOHMS) / thermistor_beta)) - 273
+        return 1 / ((1 / THERMISTOR_T0) + (math.log(r_therm / THERMISTOR_R0_KOHMS) / thermistor_beta)) - 273
 
     def measure_temp(self, adc_channel, n_samples=100):
         # Measure voltage in microvolts (for temp) Takes ~1.7ms for 100 samples.
@@ -671,7 +738,6 @@ class AsyncBtuMeter:
         minutes = elapsed_s / 60.0
         self.gpm = gallons / minutes if minutes > 0 else 0.0
 
-
     def measure_temps_and_ct(self, timer):
         # Timer callback: Runs at t=850ms, 1850ms, 2850ms...
         # Intentionally offset from flow measurement window (0-800ms)
@@ -696,7 +762,6 @@ class AsyncBtuMeter:
         self.disruption_recovery = 0
 
     def manage_flow(self, timer):
-
         if self.toss_measurement:
             print("Tossing corrupted measurement")
             self.toss_measurement = False
@@ -725,6 +790,10 @@ class AsyncBtuMeter:
 
         # ready for new measurement
         self.reset_flow_measurement()
+
+    # ---------------------------------
+    # Posting data
+    # ---------------------------------
 
     def report(self):
         now_s = utime.time()
@@ -864,7 +933,6 @@ class AsyncBtuMeter:
         )
         
     def main_loop(self):
-
         try:
             offset = round(self.capture_offset_seconds)
             if offset > 1:
@@ -873,6 +941,9 @@ class AsyncBtuMeter:
         except Exception as e:
             self.last_sync_report_s = utime.time()
         while True:
+            if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
+                self.needs_reconnect = False
+                self.try_to_reconnect()
             if self.pending_async_check:
                 # Give pulse callback the chance to cleanly catch its first
                 # timestamp. Slowest ~ 15 Hz / 67 ms
@@ -880,16 +951,19 @@ class AsyncBtuMeter:
                 print(f"{self.gpm:.2f} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
                 self.report()
                 self.pending_async_check = False
-
             utime.sleep_ms(1) 
 
     def start(self):
-        if self.wifi_or_ethernet=='wifi':
-            self.connect_to_wifi()
-        elif self.wifi_or_ethernet=='ethernet':
-            self.connect_to_ethernet()
+        try:
+            if self.wifi_or_ethernet == 'wifi':
+                net.connect_to_wifi(self.wifi_name, self.wifi_password)
+            elif self.wifi_or_ethernet == 'ethernet':
+                net.connect_to_ethernet()
+        except Exception as e:
+            print(f"Initial connect failed ({e})")
+            self.needs_reconnect = True
+            self.time_last_tried_to_reconnect = 0
 
-        # Update configurations 
         self.update_comms_config()
         self.update_app_config()
         self.update_code()
