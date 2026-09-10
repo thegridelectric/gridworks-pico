@@ -241,6 +241,7 @@ class AsyncBtuMeter:
 
                             except Exception as dns_e:
                                 print(f"DNS also failed: {dns_e}")
+                                self.needs_reconnect = True
                                 return None
                     else:
                         # IP is reachable but this specific request failed
@@ -250,6 +251,7 @@ class AsyncBtuMeter:
                 else:
                     # We were already using DNS and it failed
                     print(f"DNS request failed: {e}")
+                    self.needs_reconnect = True
                     return None
 
             # Shouldn't get here, but just in case
