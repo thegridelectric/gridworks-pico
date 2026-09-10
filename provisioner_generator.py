@@ -318,6 +318,7 @@ elif 'main_revert.py' in os.listdir():
     elif device_type == '1':
         actor_name = provision_btu_meter()
         print("This is a BTU meter.")
+        write_net_py()
         write_btu_meter_main()
 
     print(f"\\n{'-'*40}\\n[3/3] Success! Wrote 'main.py' on the Pico.\\n{'-'*40}\\n")
@@ -327,7 +328,6 @@ elif 'main_revert.py' in os.listdir():
 # ----------------------------------------------------
 # Write provisioner.py
 # ----------------------------------------------------
-
 
 with open('tank_module/tank_module_3_main.py', 'r') as file:
     tank_module_3_main = file.read()
