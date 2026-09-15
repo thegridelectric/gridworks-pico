@@ -93,12 +93,7 @@ class AsyncBtuMeter:
         except:
             app_config = {}
         self.load_app_config(app_config)
-        self.http = net.HttpClient(
-            base_url=self.base_url,
-            backup_url=self.backup_url,
-            hw_uid=self.hw_uid,
-            actor_node_name=self.actor_node_name
-        )
+        self.http = net.HttpClient(base_url=self.base_url)
 
         # Flow measurement state
         self._tick_count = 0 # Only modified by pulse_callback (ISR)
@@ -174,8 +169,6 @@ class AsyncBtuMeter:
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl", None)
-        self.backup_url = comms_config.get("BackupUrl", None)
-        print(f"After loading - base_url: {self.base_url}, backup_url: {self.backup_url}")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -209,7 +202,6 @@ class AsyncBtuMeter:
         payload = {
             "HwUid": self.hw_uid,
             "BaseUrl": self.base_url,
-            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.params",
             "Version": "000"
         }
@@ -223,27 +215,16 @@ class AsyncBtuMeter:
         if status != 200 or not isinstance(new_config, dict):
             return
 
-        # Only adopt urls that answer their /ping
-        config_changed = False
-        new_base = new_config.get("BaseUrl", self.base_url)
-        if new_base and new_base != self.base_url and self.http.is_reachable(new_base):
+        new_base = new_config.get("BaseUrl")
+        if new_base and new_base != self.base_url:
             self.base_url = new_base
-            config_changed = True
-
-        new_backup = new_config.get("BackupUrl", self.backup_url)
-        if new_backup and new_backup != self.backup_url and self.http.is_reachable(new_backup):
-            self.backup_url = new_backup
-            config_changed = True
-
-        if config_changed:
-            self.http.set_urls(self.base_url, self.backup_url)
+            self.http.base_url = new_base.rstrip("/")
             self.save_comms_config()
 
     def save_comms_config(self):
         config = {
             "WifiOrEthernet": self.wifi_or_ethernet,
             "BaseUrl": self.base_url,
-            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.config",
             "Version": "000"
         }
@@ -350,7 +331,6 @@ class AsyncBtuMeter:
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
-        self.http.actor_node_name = self.actor_node_name
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:

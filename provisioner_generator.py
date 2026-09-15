@@ -276,8 +276,6 @@ elif 'main_revert.py' in os.listdir():
             print(f"There was an error connecting to the API: {e}. Please check the hostname and try again.")
 
     print(f"Connected to the API hosted at '{base_url}'.")
-    hostname = input("Enter hostname for backup (e.g., 'beech'): ").strip()
-    backup_url = f"http://{hostname}.local:8000"
 
     # Write the parameters to comms_config.json
     if wifi_or_ethernet == 'wifi':
@@ -287,14 +285,12 @@ elif 'main_revert.py' in os.listdir():
             "WifiPassword": wifi_pass,
             "PicoBoardVariant": pico_board_variant,
             "BaseUrl": base_url,
-            "BackupUrl": backup_url
         }
     elif wifi_or_ethernet == 'ethernet':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
             "PicoBoardVariant": pico_board_variant,
             "BaseUrl": base_url,
-            "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)

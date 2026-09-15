@@ -36,13 +36,6 @@ import gc
 
 CONNECT_TIMEOUT_S = 10
 
-HEADERS = {"Content-Type": "application/json"}
-BASE_URL_ATTEMPTS = 2
-BASE_URL_RETRY_S = 300
-POST_TIMEOUT_S = 3
-BACKUP_POST_TIMEOUT_S = 5
-PING_TIMEOUT_S = 3
-
 _wlan = None
 _ethernet_nic = None
 
@@ -100,63 +93,8 @@ def is_ethernet_connected():
 
 
 class HttpClient:
-    '''POST to scada, failing over from base_url to backup_url.
-
-    base_url is the primary (an IP address in the field) and backup_url is
-    the DNS name. Once base_url stops answering its /ping we post to
-    backup_url instead, and only re-test base_url every BASE_URL_RETRY_S.
-    Failing over also posts a baseurl.failure.alert over backup_url, which
-    needs actor_node_name: the caller keeps that attribute up to date.
-    '''
-
-    def __init__(self, base_url, backup_url=None, hw_uid=None, actor_node_name=None):
-        self.hw_uid = hw_uid
-        self.actor_node_name = actor_node_name
+    def __init__(self, base_url):
         self.base_url = base_url.rstrip("/")
-        self.backup_url = None if not backup_url else backup_url.rstrip("/")
-        self.base_url_failed = False
-        self.last_base_url_retry = utime.time()
-
-    def post(self, path, payload, mode=0):
-        '''POST payload to path, on base_url or backup_url.
-
-        mode: 0=ignore body, 1=json, 2=bytes
-        Returns (status, body). A status of None means no url gave any HTTP
-        response, which is how the caller knows the link may be down. Any
-        status at all, 404 and 500 included, means scada answered.
-        '''
-        body = ujson.dumps(payload)
-        self._retry_base_url_if_due()
-
-        if self.base_url_failed:
-            return self._post_to(self.backup_url, path, body, mode, 1, BACKUP_POST_TIMEOUT_S)
-
-        status, result = self._post_to(
-            self.base_url, path, body, mode, BASE_URL_ATTEMPTS, POST_TIMEOUT_S
-        )
-        if status is not None:
-            return status, result
-
-        if self.is_reachable(self.base_url):
-            print(f"{self.base_url} is reachable but the request failed")
-            return None, None
-
-        return self._fail_over_to_backup(path, body, mode)
-
-    def post_fire_and_forget(self, path, payload):
-        status, _ = self.post(path, payload)
-        return status
-
-    def is_reachable(self, url):
-        r = None
-        try:
-            r = urequests.get(url + "/ping", timeout=PING_TIMEOUT_S)
-            return r.status_code == 200
-        except:
-            return False
-        finally:
-            self._close(r)
-            gc.collect()
 
     def _close(self, r):
         if r:
@@ -165,85 +103,58 @@ class HttpClient:
             except:
                 pass
 
-    def _post_to(self, url, path, body, mode, attempts, timeout_s):
-        for attempt in range(attempts):
-            if attempt > 0:
-                print(f"Retry {attempt} for {url}{path}")
-            r = None
-            raw = None
-            try:
-                r = urequests.post(url + path, data=body, headers=HEADERS, timeout=timeout_s)
-                status = r.status_code
-                if status == 200:
-                    raw = r.content if mode == 2 else (r.text if mode == 1 else None)
-                elif status == 404:
-                    print(f"{path} not found (404) on {url}")
-                else:
-                    print(f"{url}{path} returned status {status}")
-                    if status >= 500 and attempt < attempts - 1:
-                        continue
-            except Exception as e:
-                print(f"Attempt {attempt+1} for {url}{path} failed: {e}")
-                if attempt < attempts - 1:
-                    utime.sleep_ms(50)
-                    continue
-                return None, None
-            finally:
-                self._close(r)
-                gc.collect()
+    def post(self, path, payload, mode=0):
+        # mode: 0=ignore body, 1=json, 2=bytes
 
-            if mode == 1 and raw:
-                try:
-                    return status, ujson.loads(raw)
-                except:
-                    return status, None
-            return status, raw
+        url = self.base_url + path
+        headers = {"Content-Type": "application/json"}
+        body = ujson.dumps(payload)
 
-        return None, None
+        r = None
+        status = None
+        text = None
+        content = None
 
-    def _retry_base_url_if_due(self):
-        if not self.base_url_failed:
-            return
-        waited = utime.time() - self.last_base_url_retry
-        if waited <= BASE_URL_RETRY_S:
-            return
-        print(f"Retrying {self.base_url} after {waited}s")
-        self.last_base_url_retry = utime.time()
-        if self.is_reachable(self.base_url):
-            print(f"{self.base_url} is back online")
-            self.base_url_failed = False
-
-    def _fail_over_to_backup(self, path, body, mode):
-        if not self.backup_url:
+        try:
+            r = urequests.post(url, data=body, headers=headers)
+            status = r.status_code
+    
+            if status == 200:
+                if mode == 2:
+                    content = r.content
+                elif mode == 1:
+                    text = r.text
+        except:
             return None, None
-        message = f"switching to backup url {self.backup_url}"
-        print(message)
-        self.base_url_failed = True
-        self.last_base_url_retry = utime.time()
-        self._alert_base_url_failure(message)
-        return self._post_to(self.backup_url, path, body, mode, 1, BACKUP_POST_TIMEOUT_S)
+        finally:
+            self._close(r)
 
-    def _alert_base_url_failure(self, message):
-        if self.actor_node_name is None:
-            return
-        payload = {
-            "HwUid": self.hw_uid,
-            "ActorNodeName": self.actor_node_name,
-            "BaseUrl": self.base_url,
-            "Message": message,
-            "TypeName": "baseurl.failure.alert",
-            "Version": "100"
-        }
+        if mode == 1 and text:
+            try:
+                result = ujson.loads(text)
+            except:
+                result = None
+            gc.collect()
+            return status, result
+
+        if mode == 2:
+            gc.collect()
+            return status, content
+
+        gc.collect()
+        return status, None
+
+    def post_fire_and_forget(self, path, payload):
+        url = self.base_url + path
+        headers = {"Content-Type": "application/json"}
+        body = ujson.dumps(payload)
+
         r = None
         try:
-            r = urequests.post(
-                self.backup_url + f"/{self.actor_node_name}/baseurl-failure-alert",
-                data=ujson.dumps(payload),
-                headers=HEADERS,
-                timeout=POST_TIMEOUT_S
-            )
-        except Exception as e:
-            print(f"Could not post baseurl failure alert ({e})")
+            r = urequests.post(url, data=body, headers=headers)
+            return r.status_code
+        except:
+            return None
         finally:
             self._close(r)
             gc.collect()
@@ -330,12 +241,7 @@ class TankModule3:
         except:
             app_config = {}
         self.load_app_config(app_config)
-        self.http = net.HttpClient(
-            base_url=self.base_url,
-            backup_url=self.backup_url,
-            hw_uid=self.hw_uid,
-            actor_node_name=self.actor_node_name
-        )
+        self.http = net.HttpClient(base_url=self.base_url)
 
         # Measuring and repoting voltages
         self.prev_mv0 = -1
@@ -393,7 +299,6 @@ class TankModule3:
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl")
-        self.backup_url = comms_config.get("BackupUrl")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -492,7 +397,6 @@ class TankModule3:
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
-        self.http.actor_node_name = self.actor_node_name
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
@@ -736,12 +640,7 @@ class AsyncBtuMeter:
         except:
             app_config = {}
         self.load_app_config(app_config)
-        self.http = net.HttpClient(
-            base_url=self.base_url,
-            backup_url=self.backup_url,
-            hw_uid=self.hw_uid,
-            actor_node_name=self.actor_node_name
-        )
+        self.http = net.HttpClient(base_url=self.base_url)
 
         # Flow measurement state
         self._tick_count = 0 # Only modified by pulse_callback (ISR)
@@ -817,8 +716,6 @@ class AsyncBtuMeter:
         self.wifi_name = comms_config.get("WifiName", None)
         self.wifi_password = comms_config.get("WifiPassword", None)
         self.base_url = comms_config.get("BaseUrl", None)
-        self.backup_url = comms_config.get("BackupUrl", None)
-        print(f"After loading - base_url: {self.base_url}, backup_url: {self.backup_url}")
         if self.wifi_or_ethernet=='wifi':
             if self.wifi_name is None:
                 raise KeyError("WifiName not found in comms_config.json")
@@ -852,7 +749,6 @@ class AsyncBtuMeter:
         payload = {
             "HwUid": self.hw_uid,
             "BaseUrl": self.base_url,
-            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.params",
             "Version": "000"
         }
@@ -866,27 +762,16 @@ class AsyncBtuMeter:
         if status != 200 or not isinstance(new_config, dict):
             return
 
-        # Only adopt urls that answer their /ping
-        config_changed = False
-        new_base = new_config.get("BaseUrl", self.base_url)
-        if new_base and new_base != self.base_url and self.http.is_reachable(new_base):
+        new_base = new_config.get("BaseUrl")
+        if new_base and new_base != self.base_url:
             self.base_url = new_base
-            config_changed = True
-
-        new_backup = new_config.get("BackupUrl", self.backup_url)
-        if new_backup and new_backup != self.backup_url and self.http.is_reachable(new_backup):
-            self.backup_url = new_backup
-            config_changed = True
-
-        if config_changed:
-            self.http.set_urls(self.base_url, self.backup_url)
+            self.http.base_url = new_base.rstrip("/")
             self.save_comms_config()
 
     def save_comms_config(self):
         config = {
             "WifiOrEthernet": self.wifi_or_ethernet,
             "BaseUrl": self.base_url,
-            "BackupUrl": self.backup_url,
             "TypeName": "pico.comms.config",
             "Version": "000"
         }
@@ -993,7 +878,6 @@ class AsyncBtuMeter:
 
         self.save_app_config(new_config)
         self.load_app_config(new_config)
-        self.http.actor_node_name = self.actor_node_name
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
@@ -1660,8 +1544,6 @@ elif 'main_revert.py' in os.listdir():
             print(f"There was an error connecting to the API: {e}. Please check the hostname and try again.")
 
     print(f"Connected to the API hosted at '{base_url}'.")
-    hostname = input("Enter hostname for backup (e.g., 'beech'): ").strip()
-    backup_url = f"http://{hostname}.local:8000"
 
     # Write the parameters to comms_config.json
     if wifi_or_ethernet == 'wifi':
@@ -1671,14 +1553,12 @@ elif 'main_revert.py' in os.listdir():
             "WifiPassword": wifi_pass,
             "PicoBoardVariant": pico_board_variant,
             "BaseUrl": base_url,
-            "BackupUrl": backup_url
         }
     elif wifi_or_ethernet == 'ethernet':
         comms_config_content = {
             "WifiOrEthernet": 'ethernet',
             "PicoBoardVariant": pico_board_variant,
             "BaseUrl": base_url,
-            "BackupUrl": backup_url
         }
     with open('comms_config.json', 'w') as file:
         ujson.dump(comms_config_content, file)
