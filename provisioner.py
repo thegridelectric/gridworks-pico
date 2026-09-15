@@ -418,6 +418,8 @@ class TankModule3:
             payload,
             mode=2  # raw bytes
         )
+        if status is None:
+            self.needs_reconnect = True
         if status != 200 or not content:
             return
 
@@ -745,45 +747,6 @@ class AsyncBtuMeter:
             return "PicoWiznetEth2040"
         return "Unknown"
 
-    def update_comms_config(self):
-        payload = {
-            "HwUid": self.hw_uid,
-            "BaseUrl": self.base_url,
-            "TypeName": "pico.comms.params",
-            "Version": "000"
-        }
-        status, new_config = self.http.post(
-            f"/{self.actor_node_name}/pico-comms-params",
-            payload,
-            mode=1
-        )
-        if status is None:
-            self.needs_reconnect = True
-        if status != 200 or not isinstance(new_config, dict):
-            return
-
-        new_base = new_config.get("BaseUrl")
-        if new_base and new_base != self.base_url:
-            self.base_url = new_base
-            self.http.base_url = new_base.rstrip("/")
-            self.save_comms_config()
-
-    def save_comms_config(self):
-        config = {
-            "WifiOrEthernet": self.wifi_or_ethernet,
-            "BaseUrl": self.base_url,
-            "TypeName": "pico.comms.config",
-            "Version": "000"
-        }
-        if self.wifi_or_ethernet == "wifi":
-            config["WifiName"] = self.wifi_name
-            config["WifiPassword"] = self.wifi_password
-
-        try:
-            _atomic_write(COMMS_CONFIG_FILE, ujson.dumps(config).encode())
-        except Exception as e:
-            print(f"Error saving comms config: {e}")
-
     # ---------------------------------
     # Parameters
     # ---------------------------------
@@ -938,7 +901,7 @@ class AsyncBtuMeter:
                 reading_sum += adc_channel.read_u16()
             avg_reading = reading_sum / n_samples
             avg_voltage =  avg_reading * ADC_REF_V / 65535
-            print(f"avg voltage is {avg_voltage}")
+            # print(f"avg voltage is {avg_voltage}")
             return self.celsius_from_volts(avg_voltage)
         except Exception as e:
             print(f"Temp measurement failed: {e}")
@@ -1143,7 +1106,7 @@ class AsyncBtuMeter:
 
     def manage_flow(self, timer):
         if self.toss_measurement:
-            print("Tossing corrupted measurement")
+            # print("Tossing corrupted measurement")
             self.toss_measurement = False
             # NOT updating gpm with corrupted measurement
             self.reset_flow_measurement()
@@ -1313,7 +1276,7 @@ class AsyncBtuMeter:
                 # timestamp. Slowest ~ 15 Hz / 67 ms
                 utime.sleep_ms(100)
                 gpm_str = "None" if self.gpm is None else f"{self.gpm:.2f}"
-                print(f"{gpm_str} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
+                # print(f"{gpm_str} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
                 self.report()
                 self.pending_async_check = False
             utime.sleep_ms(1) 
@@ -1328,11 +1291,9 @@ class AsyncBtuMeter:
             print(f"Initial connect failed ({e})")
             self.needs_reconnect = True
             self.time_last_tried_to_reconnect = 0
-
-        self.update_comms_config()
-        self.update_app_config()
+        
         self.update_code()
-
+        self.update_app_config()
         self.start_timers()
         self.report() 
         self.main_loop()

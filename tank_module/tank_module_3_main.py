@@ -252,6 +252,8 @@ class TankModule3:
             payload,
             mode=2  # raw bytes
         )
+        if status is None:
+            self.needs_reconnect = True
         if status != 200 or not content:
             return
 
