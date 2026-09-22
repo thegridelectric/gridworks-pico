@@ -160,6 +160,7 @@ ADC2_PIN = 28
 
 # Other constants
 RECONNECT_COOLDOWN_S = 30
+PARAMS_RETRY_S = 30
 ADC_REF_UV = 3_300_000
 
 PICO_BOARD_VARIANTS = (
@@ -328,16 +329,17 @@ class TankModule3:
             "Version": "200"
         }
 
-    def update_app_config(self):
+    def update_app_config(self, late=False):
         current = self.current_tank_module_params()
         status, updated_config = self.http.post(
             f"/{self.actor_node_name}/tank-module-params",
             current,
             mode=1
         )
-
+        if status is None:
+            self.needs_reconnect = True
         if status != 200 or not updated_config:
-            return
+            return False
 
         PARAM_KEYS = (
             "ActorNodeName",
@@ -353,7 +355,7 @@ class TankModule3:
         )
 
         if not changed:
-            return
+            return True
 
         new_config = {
             k: updated_config.get(k, current[k])
@@ -361,11 +363,19 @@ class TankModule3:
         }
 
         self.save_app_config(new_config)
+        if late:
+            machine.reset()
         self.load_app_config(new_config)
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
             self.capture_offset_seconds = offset
+        return True
+
+    def link_is_up(self):
+        if self.wifi_or_ethernet == 'wifi':
+            return is_wifi_connected()
+        return is_ethernet_connected()
 
     # ---------------------------------
     # Code updates
@@ -464,6 +474,11 @@ class TankModule3:
             if self.needs_reconnect and utime.time() - self.time_last_tried_to_reconnect > RECONNECT_COOLDOWN_S:
                 self.needs_reconnect = False
                 self.try_to_reconnect()
+            if (not self.params_answered
+                    and self.link_is_up()
+                    and utime.time() - self.last_params_try > PARAMS_RETRY_S):
+                self.last_params_try = utime.time()
+                self.params_answered = self.update_app_config(late=True)
             self.mv0 = self.adc_micros(self.adc0)
             self.mv1 = self.adc_micros(self.adc1)
             self.mv2 = self.adc_micros(self.adc2)
@@ -492,7 +507,8 @@ class TankModule3:
             self.needs_reconnect = True
             self.time_last_tried_to_reconnect = 0
         self.update_code()
-        self.update_app_config()
+        self.params_answered = self.update_app_config()
+        self.last_params_try = utime.time()
         self.set_names()
         self.mv0 = self.adc_micros(self.adc0)
         self.mv1 = self.adc_micros(self.adc1)

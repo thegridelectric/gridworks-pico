@@ -166,6 +166,7 @@ ADC2_PIN = 28 # Current Transformer
 SAMPLES = 1000
 NUM_SAMPLE_AVERAGES = 1
 RECONNECT_COOLDOWN_S = 30
+PARAMS_RETRY_S = 30
 ADC_REF_V = 3.3
 R_FIXED_KOHMS = 5.6
 THERMISTOR_R0_KOHMS = 10
@@ -381,7 +382,7 @@ class AsyncBtuMeter:
             "Version": "100"
         }
 
-    def update_app_config(self):
+    def update_app_config(self, late=False):
         current = self.current_async_btu_params()
         status, updated_config = self.http.post(
             f"/{self.actor_node_name}/async-btu-params",
@@ -391,7 +392,7 @@ class AsyncBtuMeter:
         if status is None:
             self.needs_reconnect = True
         if status != 200 or not updated_config:
-            return
+            return False
 
         PARAM_KEYS = (
             "ActorNodeName",
@@ -414,7 +415,7 @@ class AsyncBtuMeter:
         )
 
         if not changed:
-            return
+            return True
 
         new_config = {
             k: updated_config.get(k, current[k])
@@ -422,11 +423,19 @@ class AsyncBtuMeter:
         }
 
         self.save_app_config(new_config)
+        if late:
+            machine.reset()
         self.load_app_config(new_config)
 
         offset = updated_config.get("CaptureOffsetS")
         if isinstance(offset, (int, float)) and 0 <= offset < self.capture_period_s:
             self.capture_offset_seconds = offset
+        return True
+
+    def link_is_up(self):
+        if self.wifi_or_ethernet == 'wifi':
+            return is_wifi_connected()
+        return is_ethernet_connected()
 
     # ---------------------------------
     # Code updates
@@ -861,6 +870,11 @@ class AsyncBtuMeter:
                 # print(f"{gpm_str} gpm [{self.completed_tick_count} ticks in {self.completed_elapsed_ms} ms]")
                 self.report()
                 self.pending_async_check = False
+            if (not self.params_answered
+                    and self.link_is_up()
+                    and utime.time() - self.last_params_try > PARAMS_RETRY_S):
+                self.last_params_try = utime.time()
+                self.params_answered = self.update_app_config(late=True)
             utime.sleep_ms(1) 
 
     def start(self):
@@ -875,7 +889,8 @@ class AsyncBtuMeter:
             self.time_last_tried_to_reconnect = 0
         
         self.update_code()
-        self.update_app_config()
+        self.params_answered = self.update_app_config()
+        self.last_params_try = utime.time()
         self.start_timers()
         self.report() 
         self.main_loop()
